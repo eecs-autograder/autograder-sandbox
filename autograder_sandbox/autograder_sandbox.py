@@ -169,9 +169,6 @@ class AutograderSandbox:
 
         cmd.append('cmd_runner.py')
 
-        # if timeout is not None:
-        #     cmd += ['--timeout', str(timeout)]
-
         if max_num_processes is not None:
             cmd += ['--max_num_processes', str(max_num_processes)]
 
@@ -287,7 +284,6 @@ class _SubprocessRunner(object):
                     tempfile.TemporaryFile() as stdout_dest, \
                     tempfile.TemporaryFile() as stderr_dest:
 
-                # print("Created temp files", flush=True)
                 stdin_content.write(self._stdin_content.encode('utf-8'))
                 stdin_content.seek(0)
 
