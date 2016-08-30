@@ -17,3 +17,12 @@ To run the tests, run `python3 -m autograder_sandbox.tests`
 ## Configuration
 By default, the sandbox program tries to connect to Redis at localhost:6379. To change the host or port, set the AG_REDIS_HOST
 and AG_REDIS_PORT environment variables, respectively.
+
+## Basic usage
+```
+from autograder_sandbox import AutograderSandbox
+
+with AutograderSandbox() as sandbox:
+    result = sandbox.run_command(['echo', 'hello world'], timeout=10)
+    print(result.stdout)
+```
