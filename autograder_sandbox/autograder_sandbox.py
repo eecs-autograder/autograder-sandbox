@@ -240,7 +240,6 @@ class _SubprocessRunner(object):
     Convenience wrapper for calling a subprocess and retrieving the data
     we usually need.
     """
-    _TIMEOUT_RETURN_CODE = 124
 
     def __init__(self, program_args, **kwargs):
         self._args = program_args
