@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import multiprocessing
 import itertools
+import time
 
 from collections import OrderedDict
 
@@ -97,7 +98,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             expected_output += '\n'
             self.assertEqual(expected_output, result.stdout)
 
-    def test_reset(self):
+    def test_reinitialize(self):
         with AutograderSandbox() as sandbox:
             file_to_add = os.path.abspath(__file__)
             sandbox.add_files(file_to_add)
@@ -105,10 +106,59 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             ls_result = sandbox.run_command(['ls']).stdout
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
 
-            sandbox.reset()
+            sandbox.reinitialize()
 
             ls_result = sandbox.run_command(['ls']).stdout
             self.assertEqual('', ls_result)
+
+    def test_restart_added_files_preserved(self):
+        with AutograderSandbox() as sandbox:
+            file_to_add = os.path.abspath(__file__)
+            sandbox.add_files(file_to_add)
+
+            ls_result = sandbox.run_command(['ls']).stdout
+            print(ls_result)
+            self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
+
+            sandbox.restart()
+
+            ls_result = sandbox.run_command(['ls']).stdout
+            self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
+
+    def test_restart_timed_out_zombie_processes_killed(self):
+        """
+        For some reason, running a program such as the one in
+        _PROG_THAT_FORKS causes subsequent docker exec or docker stop
+        comamnds to stall until the zombie process terminates.
+        """
+        for program_str in _PROG_THAT_FORKS, _PROG_WITH_SUBPROCESS_STALL:
+            with AutograderSandbox() as sandbox:
+                ps_result = sandbox.run_command(['ps', '-aux']).stdout
+                print(ps_result)
+                num_ps_lines = len(ps_result.split('\n'))
+                print(num_ps_lines)
+
+                script_file = _add_string_to_sandbox_as_file(
+                    program_str, '.py', sandbox)
+
+                start_time = time.time()
+                result = sandbox.run_command(
+                    ['python3', script_file], timeout=1)
+                print('command exited')
+                self.assertTrue(result.timed_out)
+
+                print('restarting sandbox')
+                sandbox.restart()
+                time_elapsed = time.time() - start_time
+                self.assertLess(time_elapsed, _SLEEP_TIME // 2,
+                                msg='Sandbox restart took too long')
+
+                ps_result_after_restart = sandbox.run_command(
+                    ['ps', '-aux']).stdout
+                print(ps_result_after_restart)
+                num_ps_lines_after_restart = len(
+                    ps_result_after_restart.split('\n'))
+                self.assertEqual(num_ps_lines, num_ps_lines_after_restart)
 
     def test_try_to_change_cmd_runner(self):
         runner_path = '/usr/local/bin/cmd_runner.py'
@@ -118,6 +168,25 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 sandbox.run_command(
                     ['touch', runner_path], raise_on_failure=True)
+
+
+_SLEEP_TIME = 20
+
+_PROG_THAT_FORKS = """
+import subprocess
+
+print('hello', flush=True)
+subprocess.Popen(['sleep', '{}'])
+print('goodbye', flush=True)
+""".format(_SLEEP_TIME)
+
+_PROG_WITH_SUBPROCESS_STALL = """
+import subprocess
+
+print('hello', flush=True)
+subprocess.call(['sleep', '{}'])
+print('goodbye', flush=True)
+""".format(_SLEEP_TIME)
 
 
 class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):

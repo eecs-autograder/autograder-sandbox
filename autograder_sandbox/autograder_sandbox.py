@@ -63,12 +63,25 @@ class AutograderSandbox:
     def __exit__(self, *args):
         self._destroy()
 
-    def reset(self):
+    def reinitialize(self):
         """
-        Destroys, re-creates, and restarts the sandbox.
+        Destroys, re-creates, and restarts the sandbox. As a side
+        effect, this will effectively kill any processes running inside
+        the sandbox and reset the sandbox's filesystem.
         """
         self._destroy()
         self._create_and_start()
+
+    def restart(self):
+        """
+        Restarts the sandbox without destroying it. As a side effect,
+        this will kill any processes running inside the sandbox.
+
+        IMPORTANT: It is strongly recommended that you call this method
+        after a command run by run_command times out.
+        """
+        self._stop()
+        subprocess.check_call(['docker', 'start', self.name])
 
     def _create_and_start(self):
         create_args = [
@@ -105,9 +118,12 @@ class AutograderSandbox:
         self._is_running = True
 
     def _destroy(self):
-        subprocess.check_call(['docker', 'stop', self.name])
-        self._is_running = False
+        self._stop()
         subprocess.check_call(['docker', 'rm', self.name])
+        self._is_running = False
+
+    def _stop(self):
+        subprocess.check_call(['docker', 'stop', '--time', '1', self.name])
 
     @property
     def name(self):
@@ -149,6 +165,8 @@ class AutograderSandbox:
                 the command's standard input stream.
 
             timeout -- A time limit in seconds.
+                NOTE: If the command times out, it is strongly
+                recommended that you call AutograderSandbox.restart().
 
             max_num_processes -- The maximum number of processes the
                 command is allowed to spawn.

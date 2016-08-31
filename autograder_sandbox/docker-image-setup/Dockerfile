@@ -1,4 +1,4 @@
-FROM ubuntu:latest
+FROM phusion/baseimage:latest
 
 RUN apt-get update --fix-missing
 
