@@ -320,9 +320,9 @@ _REDIS_SETTINGS = {
 }
 
 _NEXT_UID_KEY = 'sandbox_next_uid'
-redis.StrictRedis(**_REDIS_SETTINGS).setnx('sandbox_next_uid', 2000)
 
 
 def _get_next_linux_uid():
     redis_conn = redis.StrictRedis(**_REDIS_SETTINGS)
+    redis_conn.setnx('sandbox_next_uid', 2000)
     return redis_conn.incr(_NEXT_UID_KEY)
