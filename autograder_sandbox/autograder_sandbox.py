@@ -28,7 +28,7 @@ class AutograderSandbox:
     respectively.
     """
 
-    def __init__(self, name: str=None, allow_network_access=False,
+    def __init__(self, name: str=None, allow_network_access: bool=False,
                  environment_variables: dict=None, debug=False) -> None:
         """
         :param name: A human-readable name that can be used to identify
@@ -159,8 +159,8 @@ class AutograderSandbox:
                     max_num_processes: int=None,
                     max_stack_size: int=None,
                     max_virtual_memory: int=None,
-                    as_root=False,
-                    raise_on_failure=False) -> 'SubprocessRunner':
+                    as_root: bool=False,
+                    raise_on_failure: bool=False) -> 'SubprocessRunner':
         """
         Runs a command inside the sandbox and returns information about
         it.

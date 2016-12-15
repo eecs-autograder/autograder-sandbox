@@ -8,7 +8,7 @@ import uuid
 
 from collections import OrderedDict
 
-from autograder_sandbox import AutograderSandbox
+from .autograder_sandbox import AutograderSandbox
 
 
 def kb_to_bytes(num_kb):
