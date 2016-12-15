@@ -1,18 +1,15 @@
-#!/usr/bin/env python3
+#! /usr/bin/env python3
 
-import os
 import sys
 import subprocess
 
 from setuptools import setup
 
 try:
-    subprocess.check_call(
-        ['docker', 'build', '-t', 'autograder',
-         os.path.join('autograder_sandbox', 'docker-image-setup')])
+    subprocess.check_call(['docker', 'pull', 'jameslp/autograder-sandbox'])
 except subprocess.CalledProcessError as e:
     print(e)
-    print('Error building Docker image. Are you sure Docker is running?')
+    print('Error pulling Docker image. Are you sure Docker is running?')
     sys.exit(1)
 
 setup(name='Autograder Sandbox',

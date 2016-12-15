@@ -4,10 +4,11 @@ import subprocess
 import tempfile
 import multiprocessing
 import itertools
+import uuid
 
 from collections import OrderedDict
 
-from .autograder_sandbox import AutograderSandbox
+from autograder_sandbox import AutograderSandbox
 
 
 def kb_to_bytes(num_kb):
@@ -24,7 +25,7 @@ def gb_to_bytes(num_gb):
 
 class AutograderSandboxInitTestCase(unittest.TestCase):
     def setUp(self):
-        self.name = 'awexome_container'
+        self.name = 'awexome_container{}'.format(uuid.uuid4().hex)
         self.environment_variables = OrderedDict(
             {'spam': 'egg', 'sausage': 42})
 
@@ -32,7 +33,7 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
         sandbox = AutograderSandbox()
         self.assertIsNotNone(sandbox.name)
         self.assertFalse(sandbox.allow_network_access)
-        self.assertIsNone(sandbox.environment_variables)
+        self.assertEqual({}, sandbox.environment_variables)
 
     def test_non_default_init(self):
         sandbox = AutograderSandbox(
@@ -49,7 +50,7 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
 
 class AutograderSandboxMiscTestCase(unittest.TestCase):
     def setUp(self):
-        self.name = 'awexome_container'
+        self.name = 'awexome_container{}'.format(uuid.uuid4().hex)
         self.environment_variables = OrderedDict(
             {'spam': 'egg', 'sausage': 42})
 
