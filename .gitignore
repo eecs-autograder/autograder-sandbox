@@ -65,3 +65,4 @@ target/
 venv
 docs/_build
 .vscode
+tags

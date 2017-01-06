@@ -3,7 +3,7 @@
 from setuptools import setup
 
 setup(name='autograder-sandbox',
-      version='1.0.0b0',
+      version='1.0.0',
       description='Docker wrapper for securely running untrusted code',
       author='James Perretta',
       author_email='jameslp@umich.edu',
