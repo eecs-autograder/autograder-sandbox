@@ -14,8 +14,13 @@ Full API documentation can be found at http://autograder-sandbox.readthedocs.io/
 1. Install this library with pip: `pip install autograder-sandbox`
 
 ## Configuration
+### Redis
 By default, the sandbox program tries to connect to Redis at localhost:6379. To change the host or port, set the AG_REDIS_HOST
 and AG_REDIS_PORT environment variables, respectively.
+
+### Docker Image
+The Docker image used by default is [jameslp/autograder-sandbox](https://hub.docker.com/r/jameslp/autograder-sandbox/).
+To use your own image, begin your custom Dockerfile with `FROM jameslp/autograder-sandbox:latest`, and then set the SANDBOX_DOCKER_IMAGE environment variable to the name of your built image.
 
 ## Basic usage
 ```
