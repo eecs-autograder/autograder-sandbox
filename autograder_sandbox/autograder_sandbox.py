@@ -184,11 +184,11 @@ class AutograderSandbox:
                     max_stack_size: int=None,
                     max_virtual_memory: int=None,
                     as_root: bool=False,
-                    input='',
-                    timeout=None,
-                    check=False,
-                    encoding='utf-8',
-                    errors='backslashreplace') -> subprocess.CompletedProcess:
+                    input: str='',
+                    timeout: int=None,
+                    check: bool=False,
+                    encoding: str='utf-8',
+                    errors: str='backslashreplace') -> subprocess.CompletedProcess:
         """
         Runs a command inside the sandbox and returns information about
         it.
