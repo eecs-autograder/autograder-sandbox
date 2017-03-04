@@ -2,16 +2,16 @@ import os
 import subprocess
 import tarfile
 import tempfile
-from typing import List
 import uuid
+from typing import List
 
-import redis
-
+import redis  # type: ignore
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
 SANDBOX_USERNAME = 'autograder'
-SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'jameslp/autograder-sandbox')
+SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE',
+                                      'jameslp/autograder-sandbox')
 
 
 class AutograderSandbox:
@@ -28,14 +28,24 @@ class AutograderSandbox:
     respectively.
     """
 
-    def __init__(self, name: str=None, allow_network_access: bool=False,
-                 environment_variables: dict=None, debug=False) -> None:
+    def __init__(self, name: str=None,
+                 docker_image: str=SANDBOX_DOCKER_IMAGE,
+                 allow_network_access: bool=False,
+                 environment_variables: dict=None,
+                 container_create_timeout: int=None,
+                 debug=False) -> None:
         """
         :param name: A human-readable name that can be used to identify
             this sandbox instance. This value must be unique across all
             sandbox instances, otherwise starting the sandbox will fail.
             If no value is specified, a random name will be generated
             automatically.
+
+        :param docker_image: The name of the docker image to create the
+            sandbox from. Note that in order to function properly, all
+            custom docker images must extend jameslp/autograder-sandbox.
+            This value takes precedence over the value of the
+            environment variable SANDBOX_DOCKER_IMAGE.
 
         :param allow_network_access: When True, programs running inside
             the sandbox will have unrestricted access to external
@@ -46,6 +56,11 @@ class AutograderSandbox:
             value) pairs that should be set as environment variables
             inside the sandbox.
 
+        :param container_create_timeout: A time limit to be placed on
+            creating the underlying Docker container for this sandbox.
+            If the time limit is exceeded, subprocess.CalledProcessError
+            will be raised. A value of None indicates no time limit.
+
         :param debug: Whether to print additional debugging information.
         """
         if name is None:
@@ -53,14 +68,12 @@ class AutograderSandbox:
         else:
             self._name = name
 
+        self._docker_image = docker_image
         self._linux_uid = _get_next_linux_uid()
-
         self._allow_network_access = allow_network_access
-
         self._environment_variables = environment_variables
-
         self._is_running = False
-
+        self._container_create_timeout = container_create_timeout
         self.debug = debug
 
     def __enter__(self):
@@ -96,14 +109,20 @@ class AutograderSandbox:
                     '-e', "{}={}".format(key, value)
                 ]
 
-        create_args.append(SANDBOX_DOCKER_IMAGE)  # Image to use
+        create_args.append(self.docker_image)  # Image to use
 
-        subprocess.check_call(create_args, timeout=10)
+        subprocess.check_call(create_args,
+                              timeout=self._container_create_timeout)
         try:
-            self.run_command(
-                ['usermod', '-u', str(self._linux_uid), SANDBOX_USERNAME],
-                as_root=True, raise_on_failure=True)
-        except subprocess.CalledProcessError:
+            subprocess.run(
+                ['docker', 'exec', '-i', self.name, 'usermod', '-u',
+                 str(self._linux_uid), SANDBOX_USERNAME],
+                check=True)
+        except subprocess.CalledProcessError as e:
+            if self.debug:
+                print(e.stdout)
+                print(e.stderr)
+
             self._destroy()
             raise
 
@@ -120,6 +139,13 @@ class AutograderSandbox:
         The name used to identify this sandbox. (Read only)
         '''
         return self._name
+
+    @property
+    def docker_image(self) -> str:
+        '''
+        The name of the docker image to create the sandbox from.
+        '''
+        return self._docker_image
 
     @property
     def allow_network_access(self) -> bool:
@@ -154,24 +180,28 @@ class AutograderSandbox:
 
     def run_command(self,
                     args: List[str],
-                    input_content: str=None,
-                    timeout: int=None,
                     max_num_processes: int=None,
                     max_stack_size: int=None,
                     max_virtual_memory: int=None,
                     as_root: bool=False,
-                    raise_on_failure: bool=False) -> 'SubprocessRunner':
+                    input: str='',
+                    timeout: int=None,
+                    check: bool=False,
+                    encoding: str='utf-8',
+                    errors: str='backslashreplace') -> subprocess.CompletedProcess:
         """
-        Runs a command inside the sandbox and returns information about
-        it.
+        Runs a command inside the sandbox and returns a
+        subprocess.CompletedProcess object.
+
+        *Note*: The stdout and
+        stderr fields of this object are modified so as to always be
+        strings.
+
+        *New in 2.0.0*: This function raises subprocess.TimeoutExpired
+        if timeout is exceeded.
 
         :param args: A list of strings that specify which command should
             be run inside the sandbox.
-
-        :param input_content: A string whose contents should be passed to
-            the command's standard input stream.
-
-        :param timeout: A time limit in seconds.
 
         :param max_num_processes: The maximum number of processes the
             command is allowed to spawn.
@@ -184,8 +214,18 @@ class AutograderSandbox:
 
         :param as_root: Whether to run the command as a root user.
 
-        :param raise_on_failure: If True, subprocess.CalledProcessError
-            will be raised if the command exits with nonzero status.
+        :param input: A string to be passed as input to the command's
+            stdin.
+        :param timeout: The time limit for the command.
+        :param check: Causes CalledProcessError to be raised if the
+            command exits nonzero.
+
+        :param encoding: The encoding to use for stdin, stdout, and
+            stderr. See https://docs.python.org/3/library/codecs.html
+            for valid values for this parameter.
+        :param errors: The error handling policy for the specified
+            encoding. See https://docs.python.org/3/library/codecs.html
+            for valid values for this parameter.
         """
         cmd = ['docker', 'exec', '-i']
         cmd.append(self.name)
@@ -209,13 +249,16 @@ class AutograderSandbox:
         if self.debug:
             print('running: {}'.format(cmd), flush=True)
 
-        if input_content is None:
-            input_content = ''
-        return SubprocessRunner(cmd,
+        result = subprocess.run(cmd,
+                                input=input.encode(encoding, errors=errors),
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
                                 timeout=timeout,
-                                raise_on_failure=raise_on_failure,
-                                stdin_content=input_content,
-                                debug=self.debug)
+                                check=check)
+
+        result.stdout = result.stdout.decode(encoding, errors=errors)
+        result.stderr = result.stderr.decode(encoding, errors=errors)
+        return result
 
     def add_files(self, *filenames: str):
         """
@@ -253,90 +296,6 @@ class AutograderSandbox:
             'chown', '{}:{}'.format(SANDBOX_USERNAME, SANDBOX_USERNAME)]
         chown_cmd += filenames
         self.run_command(chown_cmd, as_root=True)
-
-
-# TODO: Once upgraded to Python 3.5, replace call() with the
-# new subprocess.run() method.
-class SubprocessRunner:
-    """
-    Convenience wrapper for calling a subprocess and retrieving the data
-    we usually need.
-    Avoid using this class directly other than for reading results, as
-    it will likely be replaced in future releases.
-    """
-
-    def __init__(self, program_args, **kwargs):
-        self._args = program_args
-        self._timeout = kwargs.get('timeout', None)
-        self._stdin_content = kwargs.get('stdin_content', '')
-        self._merge_stdout_and_stderr = kwargs.get(
-            'merge_stdout_and_stderr', False)
-        if kwargs.get('raise_on_failure', False):
-            self._subprocess_method = subprocess.check_call
-        else:
-            self._subprocess_method = subprocess.call
-
-        self._timed_out = False
-        self._return_code = None
-        self._stdout = None
-        self._stderr = None
-
-        self.debug = kwargs.get('debug', False)
-
-        self._run()
-
-    @property
-    def timed_out(self) -> bool:
-        return self._timed_out
-
-    @property
-    def return_code(self) -> int:
-        return self._return_code
-
-    @property
-    def stdout(self) -> str:
-        return self._stdout
-
-    @property
-    def stderr(self) -> str:
-        return self._stderr
-
-    def _run(self):
-        try:
-            with tempfile.TemporaryFile() as stdin_content, \
-                    tempfile.TemporaryFile() as stdout_dest, \
-                    tempfile.TemporaryFile() as stderr_dest:
-
-                stdin_content.write(self._stdin_content.encode('utf-8'))
-                stdin_content.seek(0)
-
-                try:
-                    self._return_code = self._subprocess_method(
-                        self._args,
-                        stdin=stdin_content,
-                        stdout=stdout_dest,
-                        stderr=stderr_dest,
-                        timeout=self._timeout
-                    )
-                    if self.debug:
-                        print("Finished running: ", self._args, flush=True)
-                finally:
-                    stdout_dest.seek(0)
-                    stderr_dest.seek(0)
-                    self._stdout = stdout_dest.read().decode('utf-8')
-                    self._stderr = stderr_dest.read().decode('utf-8')
-
-                    if self.debug:
-                        print("Return code: ", self._return_code, flush=True)
-                        print(self._stdout, flush=True)
-                        print(self._stderr, flush=True)
-        except subprocess.TimeoutExpired:
-            self._timed_out = True
-        except UnicodeDecodeError:
-            msg = ("Error reading program output: "
-                   "non-unicode characters detected")
-            self._stdout = msg
-            self._stderr = msg
 
 
 _REDIS_SETTINGS = {

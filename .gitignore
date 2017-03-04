@@ -66,3 +66,4 @@ venv
 docs/_build
 .vscode
 tags
+*.rdb
