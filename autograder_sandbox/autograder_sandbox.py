@@ -172,7 +172,7 @@ class AutograderSandbox:
                     timeout=None,
                     check=False,
                     encoding='utf-8',
-                    errors='None') -> subprocess.CompletedProcess:
+                    errors='backslashreplace') -> subprocess.CompletedProcess:
         """
         Runs a command inside the sandbox and returns information about
         it.
@@ -227,14 +227,14 @@ class AutograderSandbox:
             print('running: {}'.format(cmd), flush=True)
 
         result = subprocess.run(cmd,
-                                input=input.encode('utf-8', errors='backslashreplace'),
+                                input=input.encode(encoding, errors=errors),
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
                                 timeout=timeout,
                                 check=check)
 
-        result.stdout = result.stdout.decode('utf-8', errors='backslashreplace')
-        result.stderr = result.stderr.decode('utf-8', errors='backslashreplace')
+        result.stdout = result.stdout.decode(encoding, errors=errors)
+        result.stderr = result.stderr.decode(encoding, errors=errors)
         return result
 
     def add_files(self, *filenames: str):

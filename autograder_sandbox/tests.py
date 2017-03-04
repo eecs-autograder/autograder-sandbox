@@ -135,6 +135,19 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertEqual(timeout, kwargs['timeout'])
 
 
+class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
+
+    def test_non_unicode_chars_in_input_and_output(self):
+        # This string was produced from the following line of code:
+        #   b'\x9c'.decode('utf-8', errors='surrogateescape')
+        non_utf8_input = '\udc9c'
+        expected_output = '\\udc9c'
+        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+            result = sandbox.run_command(['cat'], input=non_utf8_input)
+            self.assertEqual(expected_output, result.stdout)
+            print(result.stdout)
+
+
 class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
     sandbox = None  # type: AutograderSandbox
 
