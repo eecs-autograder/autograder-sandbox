@@ -39,9 +39,10 @@ Versioning scheme:
 - x.0.0 releases may contain backwards-incompatible changes.
 
 2.0.0 - Removes support for versions of Python < 3.5
-- #4
-- #5
-- #6
+- Issues fixed:
+    - [#4](/james-perretta/autograder-sandbox/issues/4)
+    - [#5](/james-perretta/autograder-sandbox/issues/5)
+    - [#6](/james-perretta/autograder-sandbox/issues/6)
 - Changes to AutograderSandbox constructor parameters:
     - Added `docker_image` and `container_create_timeout`
 - Changes to AutograderSandbox.run_command() parameters:

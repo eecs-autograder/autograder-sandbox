@@ -26,6 +26,7 @@ def gb_to_bytes(num_gb):
 
 
 class AutograderSandboxInitTestCase(unittest.TestCase):
+
     def setUp(self):
         self.name = 'awexome_container{}'.format(uuid.uuid4().hex)
         self.environment_variables = OrderedDict(
@@ -53,6 +54,7 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
 
 
 class AutograderSandboxMiscTestCase(unittest.TestCase):
+
     def setUp(self):
         self.name = 'awexome_container{}'.format(uuid.uuid4().hex)
         self.environment_variables = OrderedDict(
@@ -151,7 +153,6 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
 
 
 class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
-    sandbox = None  # type: AutograderSandbox
 
     def setUp(self):
         self.sandbox = AutograderSandbox()
@@ -488,6 +489,7 @@ _GOOGLE_IP_ADDR = "216.58.214.196"
 
 
 class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
+
     def setUp(self):
         super().setUp()
 
@@ -533,6 +535,7 @@ class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
 
 
 class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
+
     def test_copy_files_into_sandbox(self):
         files = []
         try:
