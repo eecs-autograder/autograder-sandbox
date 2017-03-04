@@ -44,6 +44,8 @@ class AutograderSandbox:
         :param docker_image: The name of the docker image to create the
             sandbox from. Note that in order to function properly, all
             custom docker images must extend jameslp/autograder-sandbox.
+            This value takes precedence over the value of the
+            environment variable SANDBOX_DOCKER_IMAGE.
 
         :param allow_network_access: When True, programs running inside
             the sandbox will have unrestricted access to external
