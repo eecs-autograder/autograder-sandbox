@@ -44,6 +44,8 @@ class AutograderSandbox:
         :param docker_image: The name of the docker image to create the
             sandbox from. Note that in order to function properly, all
             custom docker images must extend jameslp/autograder-sandbox.
+            This value takes precedence over the value of the
+            environment variable SANDBOX_DOCKER_IMAGE.
 
         :param allow_network_access: When True, programs running inside
             the sandbox will have unrestricted access to external
@@ -182,14 +184,21 @@ class AutograderSandbox:
                     max_stack_size: int=None,
                     max_virtual_memory: int=None,
                     as_root: bool=False,
-                    input='',
-                    timeout=None,
-                    check=False,
-                    encoding='utf-8',
-                    errors='backslashreplace') -> subprocess.CompletedProcess:
+                    input: str='',
+                    timeout: int=None,
+                    check: bool=False,
+                    encoding: str='utf-8',
+                    errors: str='backslashreplace') -> subprocess.CompletedProcess:
         """
-        Runs a command inside the sandbox and returns information about
-        it.
+        Runs a command inside the sandbox and returns a
+        subprocess.CompletedProcess object.
+
+        *Note*: The stdout and
+        stderr fields of this object are modified so as to always be
+        strings.
+
+        *New in 2.0.0*: This function raises subprocess.TimeoutExpired
+        if timeout is exceeded.
 
         :param args: A list of strings that specify which command should
             be run inside the sandbox.
