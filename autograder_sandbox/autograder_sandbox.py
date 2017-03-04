@@ -28,7 +28,9 @@ class AutograderSandbox:
     respectively.
     """
 
-    def __init__(self, name: str=None, allow_network_access: bool=False,
+    def __init__(self, name: str=None,
+                 docker_image: str=SANDBOX_DOCKER_IMAGE,
+                 allow_network_access: bool=False,
                  environment_variables: dict=None,
                  container_create_timeout: int=None,
                  debug=False) -> None:
@@ -38,6 +40,10 @@ class AutograderSandbox:
             sandbox instances, otherwise starting the sandbox will fail.
             If no value is specified, a random name will be generated
             automatically.
+
+        :param docker_image: The name of the docker image to create the
+            sandbox from. Note that in order to function properly, all
+            custom docker images must extend jameslp/autograder-sandbox.
 
         :param allow_network_access: When True, programs running inside
             the sandbox will have unrestricted access to external
@@ -60,6 +66,7 @@ class AutograderSandbox:
         else:
             self._name = name
 
+        self._docker_image = docker_image
         self._linux_uid = _get_next_linux_uid()
         self._allow_network_access = allow_network_access
         self._environment_variables = environment_variables
@@ -100,7 +107,7 @@ class AutograderSandbox:
                     '-e', "{}={}".format(key, value)
                 ]
 
-        create_args.append(SANDBOX_DOCKER_IMAGE)  # Image to use
+        create_args.append(self.docker_image)  # Image to use
 
         subprocess.check_call(create_args,
                               timeout=self._container_create_timeout)
@@ -130,6 +137,13 @@ class AutograderSandbox:
         The name used to identify this sandbox. (Read only)
         '''
         return self._name
+
+    @property
+    def docker_image(self) -> str:
+        '''
+        The name of the docker image to create the sandbox from.
+        '''
+        return self._docker_image
 
     @property
     def allow_network_access(self) -> bool:

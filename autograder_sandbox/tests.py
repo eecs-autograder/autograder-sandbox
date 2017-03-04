@@ -36,18 +36,20 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
         self.assertIsNotNone(sandbox.name)
         self.assertFalse(sandbox.allow_network_access)
         self.assertEqual({}, sandbox.environment_variables)
+        self.assertEqual('jameslp/autograder-sandbox', sandbox.docker_image)
 
     def test_non_default_init(self):
+        docker_image = 'waaaaluigi'
         sandbox = AutograderSandbox(
             name=self.name,
+            docker_image=docker_image,
             allow_network_access=True,
             environment_variables=self.environment_variables
         )
-        self.assertEqual(self.name,
-                         sandbox.name)
+        self.assertEqual(self.name, sandbox.name)
+        self.assertEqual(docker_image, sandbox.docker_image)
         self.assertTrue(sandbox.allow_network_access)
-        self.assertEqual(self.environment_variables,
-                         sandbox.environment_variables)
+        self.assertEqual(self.environment_variables, sandbox.environment_variables)
 
 
 class AutograderSandboxMiscTestCase(unittest.TestCase):
