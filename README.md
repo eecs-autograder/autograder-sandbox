@@ -42,6 +42,14 @@ Versioning scheme:
 - #4
 - #5
 - #6
+- Changes to AutograderSandbox constructor parameters:
+    - Added `docker_image` and `container_create_timeout`
+- Changes to AutograderSandbox.run_command() parameters:
+    - Added `encoding` and `errors`
+    - Renamed `input_content` to `input`
+    - Renamed `raise_on_failure` to `check`
+- AutograderSandbox.run_command() now returns subprocess.CompletedProcess. The `stdout` and `stderr` fields of the returned objects will always be strings.
+- AutograderSandbox.run_command() now raises subprocess.TimeoutExpired if the time limit is exceeded. There is no longer a `timed_out` field of the returned object.
 
 1.0.0 - Initial release
 

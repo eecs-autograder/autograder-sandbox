@@ -190,8 +190,15 @@ class AutograderSandbox:
                     encoding: str='utf-8',
                     errors: str='backslashreplace') -> subprocess.CompletedProcess:
         """
-        Runs a command inside the sandbox and returns information about
-        it.
+        Runs a command inside the sandbox and returns a
+        subprocess.CompletedProcess object.
+
+        *Note*: The stdout and
+        stderr fields of this object are modified so as to always be
+        strings.
+
+        *New in 2.0.0*: This function raises subprocess.TimeoutExpired
+        if timeout is exceeded.
 
         :param args: A list of strings that specify which command should
             be run inside the sandbox.

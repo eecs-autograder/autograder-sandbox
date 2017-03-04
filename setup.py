@@ -11,4 +11,5 @@ setup(name='autograder-sandbox',
       packages=["autograder_sandbox"],
       url='https://github.com/eecs280staff/autograder-sandbox',
       license='GNU Lesser General Public License v3',
-      install_requires=['redis>=2.10.5'])
+      install_requires=['redis>=2.10.5'],
+      classifiers=['Programming Language :: Python :: 3.5'])
