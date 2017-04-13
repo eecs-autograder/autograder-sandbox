@@ -38,6 +38,9 @@ Versioning scheme:
 - 0.x.0 releases contain new features.
 - x.0.0 releases may contain backwards-incompatible changes.
 
+2.0.1 - Hotfix for output decoding issue.
+- Previously, stdout and stderr were not being decoded on TimeoutExpired or CalledProcessError. This release fixes this.
+
 2.0.0 - Removes support for versions of Python < 3.5
 - Issues fixed:
     - [#4](/james-perretta/autograder-sandbox/issues/4)

@@ -3,7 +3,7 @@
 from setuptools import setup  # type: ignore
 
 setup(name='autograder-sandbox',
-      version='2.0.0',
+      version='2.0.1',
       description=('Python library for running untrusted '
                    'code in Docker containers'),
       author='James Perretta',
