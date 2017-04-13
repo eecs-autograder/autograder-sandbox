@@ -249,16 +249,21 @@ class AutograderSandbox:
         if self.debug:
             print('running: {}'.format(cmd), flush=True)
 
-        result = subprocess.run(cmd,
-                                input=input.encode(encoding, errors=errors),
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                timeout=timeout,
-                                check=check)
+        try:
+            result = subprocess.run(cmd,
+                                    input=input.encode(encoding, errors=errors),
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    timeout=timeout,
+                                    check=check)
 
-        result.stdout = result.stdout.decode(encoding, errors=errors)
-        result.stderr = result.stderr.decode(encoding, errors=errors)
-        return result
+            result.stdout = result.stdout.decode(encoding, errors=errors)
+            result.stderr = result.stderr.decode(encoding, errors=errors)
+            return result
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            e.stdout = e.stdout.decode(encoding, errors=errors)
+            e.stderr = e.stderr.decode(encoding, errors=errors)
+            raise e
 
     def add_files(self, *filenames: str):
         """

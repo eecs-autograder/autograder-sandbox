@@ -140,16 +140,69 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
 
 
 class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
+    def setUp(self):
+        self.non_utf = b'\x80 and some other stuff just because\n'
+        self.file_to_print = 'non-utf.txt'
+        with open(self.file_to_print, 'wb') as f:
+            f.write(self.non_utf)
 
-    def test_non_unicode_chars_in_input_and_output(self):
-        # This string was produced from the following line of code:
-        #   b'\x9c'.decode('utf-8', errors='surrogateescape')
-        non_utf8_input = '\udc9c'
-        expected_output = '\\udc9c'
+        self.escaped_non_utf = self.non_utf.decode('utf-8', 'backslashreplace')
+
+    def test_non_default_strict_encoding_errors_policy(self):
+        with AutograderSandbox() as sandbox:
+            sandbox.add_files(self.file_to_print)
+            with self.assertRaises(UnicodeDecodeError):
+                sandbox.run_command(['cat', self.file_to_print], errors='strict')
+
+    def test_non_unicode_chars_in_normal_output(self):
         with AutograderSandbox() as sandbox:  # type: AutograderSandbox
-            result = sandbox.run_command(['cat'], input=non_utf8_input)
-            self.assertEqual(expected_output, result.stdout)
+            sandbox.add_files(self.file_to_print)
+
+            result = sandbox.run_command(['cat', self.file_to_print])
             print(result.stdout)
+            self.assertEqual(self.escaped_non_utf, result.stdout)
+
+            result = sandbox.run_command(['bash', '-c', '>&2 cat ' + self.file_to_print])
+            print(result.stderr)
+            self.assertEqual(self.escaped_non_utf, result.stderr)
+
+    def test_output_encoded_on_timeout(self):
+        with AutograderSandbox() as sandbox:
+            sandbox.add_files(self.file_to_print)
+
+            with self.assertRaises(subprocess.TimeoutExpired) as cm:
+                sandbox.run_command(
+                    ['bash', '-c', 'cat {}; sleep 5'.format(self.file_to_print)],
+                    timeout=1)
+            self.assertEqual(self.escaped_non_utf, cm.exception.stdout)
+
+        with AutograderSandbox() as sandbox:
+            sandbox.add_files(self.file_to_print)
+
+            with self.assertRaises(subprocess.TimeoutExpired) as cm:
+                sandbox.run_command(
+                    ['bash', '-c', '>&2 cat {}; sleep 5'.format(self.file_to_print)],
+                    timeout=1)
+            self.assertEqual(self.escaped_non_utf, cm.exception.stderr)
+
+    def test_output_encoded_on_process_error(self):
+        with AutograderSandbox() as sandbox:
+            sandbox.add_files(self.file_to_print)
+
+            with self.assertRaises(subprocess.CalledProcessError) as cm:
+                sandbox.run_command(
+                    ['bash', '-c', 'cat {}; exit 1'.format(self.file_to_print)],
+                    check=True)
+            self.assertEqual(self.escaped_non_utf, cm.exception.stdout)
+
+        with AutograderSandbox() as sandbox:
+            sandbox.add_files(self.file_to_print)
+
+            with self.assertRaises(subprocess.CalledProcessError) as cm:
+                sandbox.run_command(
+                    ['bash', '-c', '>&2 cat {}; exit 1'.format(self.file_to_print)],
+                    check=True)
+            self.assertEqual(self.escaped_non_utf, cm.exception.stderr)
 
 
 class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
