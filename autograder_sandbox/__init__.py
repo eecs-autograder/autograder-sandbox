@@ -1,1 +1,1 @@
-from .autograder_sandbox import AutograderSandbox
+from .autograder_sandbox import AutograderSandbox  # noqa

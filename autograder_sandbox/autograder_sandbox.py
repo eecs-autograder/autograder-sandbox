@@ -1,15 +1,18 @@
+import json
 import os
 import subprocess
 import tarfile
 import tempfile
 import uuid
+from typing import List
 
-import redis
-
+import redis  # type: ignore
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
 SANDBOX_USERNAME = 'autograder'
+SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE',
+                                      'jameslp/autograder-sandbox')
 
 
 class AutograderSandbox:
@@ -21,40 +24,58 @@ class AutograderSandbox:
     found at: https://www.docker.com/
 
     Instances of this class are intended to be used with a context
-    manager.
+    manager. The underlying docker container to be used is created and
+    destroyed when the context manager is entered and exited,
+    respectively.
     """
 
-    def __init__(self, name=None, allow_network_access=False,
-                 environment_variables=None):
+    def __init__(self, name: str=None,
+                 docker_image: str=SANDBOX_DOCKER_IMAGE,
+                 allow_network_access: bool=False,
+                 environment_variables: dict=None,
+                 container_create_timeout: int=None,
+                 debug=False) -> None:
         """
-        Params:
-            name -- A human-readable name that can be used to identify
-                this sandbox instance. This value must be unique across
-                all sandbox instances, otherwise starting the sandbox
-                will fail. If no value is specified, a random name will
-                be generated automatically.
+        :param name: A human-readable name that can be used to identify
+            this sandbox instance. This value must be unique across all
+            sandbox instances, otherwise starting the sandbox will fail.
+            If no value is specified, a random name will be generated
+            automatically.
 
-            allow_network_access -- When True, programs running inside
-                the sandbox will have unrestricted access to external
-                IP addresses. When False, programs will not be able
-                to contact any external IPs.
+        :param docker_image: The name of the docker image to create the
+            sandbox from. Note that in order to function properly, all
+            custom docker images must extend jameslp/autograder-sandbox.
+            This value takes precedence over the value of the
+            environment variable SANDBOX_DOCKER_IMAGE.
 
-            environment_variables -- A dictionary of variable_name:
-                value pairs that should be set as environment variables
-                inside the sandbox.
+        :param allow_network_access: When True, programs running inside
+            the sandbox will have unrestricted access to external
+            IP addresses. When False, programs will not be able
+            to contact any external IPs.
+
+        :param environment_variables: A dictionary of (variable_name:
+            value) pairs that should be set as environment variables
+            inside the sandbox.
+
+        :param container_create_timeout: A time limit to be placed on
+            creating the underlying Docker container for this sandbox.
+            If the time limit is exceeded, subprocess.CalledProcessError
+            will be raised. A value of None indicates no time limit.
+
+        :param debug: Whether to print additional debugging information.
         """
         if name is None:
             self._name = 'sandbox-{}'.format(uuid.uuid4().hex)
         else:
             self._name = name
 
+        self._docker_image = docker_image
         self._linux_uid = _get_next_linux_uid()
-
         self._allow_network_access = allow_network_access
-
         self._environment_variables = environment_variables
-
         self._is_running = False
+        self._container_create_timeout = container_create_timeout
+        self.debug = debug
 
     def __enter__(self):
         self._create_and_start()
@@ -63,7 +84,7 @@ class AutograderSandbox:
     def __exit__(self, *args):
         self._destroy()
 
-    def reinitialize(self):
+    def reset(self) -> None:
         """
         Destroys, re-creates, and restarts the sandbox. As a side
         effect, this will effectively kill any processes running inside
@@ -102,16 +123,20 @@ class AutograderSandbox:
                     '-e', "{}={}".format(key, value)
                 ]
 
-        create_args += [
-            'autograder',  # Image to use
-        ]
+        create_args.append(self.docker_image)  # Image to use
 
-        subprocess.check_call(create_args, timeout=10)
+        subprocess.check_call(create_args,
+                              timeout=self._container_create_timeout)
         try:
-            self.run_command(
-                ['usermod', '-u', str(self._linux_uid), SANDBOX_USERNAME],
-                as_root=True, raise_on_failure=True)
-        except subprocess.CalledProcessError:
+            subprocess.run(
+                ['docker', 'exec', '-i', self.name, 'usermod', '-u',
+                 str(self._linux_uid), SANDBOX_USERNAME],
+                check=True)
+        except subprocess.CalledProcessError as e:
+            if self.debug:
+                print(e.stdout)
+                print(e.stderr)
+
             self._destroy()
             raise
 
@@ -126,15 +151,30 @@ class AutograderSandbox:
         subprocess.check_call(['docker', 'stop', '--time', '1', self.name])
 
     @property
-    def name(self):
+    def name(self) -> str:
+        '''
+        The name used to identify this sandbox. (Read only)
+        '''
         return self._name
 
     @property
-    def allow_network_access(self):
+    def docker_image(self) -> str:
+        '''
+        The name of the docker image to create the sandbox from.
+        '''
+        return self._docker_image
+
+    @property
+    def allow_network_access(self) -> bool:
+        '''
+        Whether network access is allowed by this sandbox.
+        If an attempt to set this value is made while the sandbox is
+        running, ValueError will be raised.
+        '''
         return self._allow_network_access
 
     @allow_network_access.setter
-    def allow_network_access(self, value):
+    def allow_network_access(self, value: bool):
         """
         Raises ValueError if this sandbox instance is currently running.
         """
@@ -145,42 +185,64 @@ class AutograderSandbox:
         self._allow_network_access = value
 
     @property
-    def environment_variables(self):
-        return self._environment_variables
+    def environment_variables(self) -> dict:
+        '''
+        A dictionary of environment variables to be set inside the
+        sandbox (Read only).
+        '''
+        if not self._environment_variables:
+            return {}
 
-    def run_command(self, args, input_content=None,
-                    timeout=None,
-                    max_num_processes=None,
-                    max_stack_size=None,
-                    max_virtual_memory=None,
-                    as_root=False, raise_on_failure=False):
+        return dict(self._environment_variables)
+
+    def run_command(self,
+                    args: List[str],
+                    max_num_processes: int=None,
+                    max_stack_size: int=None,
+                    max_virtual_memory: int=None,
+                    as_root: bool=False,
+                    input: str='',
+                    timeout: int=None,
+                    check: bool=False,
+                    encoding: str='utf-8',
+                    errors: str='backslashreplace') -> subprocess.CompletedProcess:
         """
-        Runs a command inside the sandbox.
+        Runs a command inside the sandbox and returns a
+        subprocess.CompletedProcess object.
 
-        Params:
-            args -- A list of strings that specify which command should
-                be run inside the sandbox.
+        *Note*: The stdout and
+        stderr fields of this object are modified so as to always be
+        strings.
 
-            input_content -- A string whose contents should be passed to
-                the command's standard input stream.
+        *New in 2.0.0*: This function raises subprocess.TimeoutExpired
+        if timeout is exceeded.
 
-            timeout -- A time limit in seconds.
-                NOTE: If the command times out, it is strongly
-                recommended that you call AutograderSandbox.restart().
+        :param args: A list of strings that specify which command should
+            be run inside the sandbox.
 
-            max_num_processes -- The maximum number of processes the
-                command is allowed to spawn.
+        :param max_num_processes: The maximum number of processes the
+            command is allowed to spawn.
 
-            max_stack_size -- The maximum stack size, in bytes, allowed
-                for the command.
+        :param max_stack_size: The maximum stack size, in bytes, allowed
+            for the command.
 
-            max_virtual_memory -- The maximum amount of memory, in
-                bytes, allowed for the command.
+        :param max_virtual_memory: The maximum amount of memory, in
+            bytes, allowed for the command.
 
-            as_root -- Whether to run the command as a root user.
+        :param as_root: Whether to run the command as a root user.
 
-            raise_on_failure -- If True, subprocess.CalledProcessError
-                will be raised if the command exits with nonzero status.
+        :param input: A string to be passed as input to the command's
+            stdin.
+        :param timeout: The time limit for the command.
+        :param check: Causes CalledProcessError to be raised if the
+            command exits nonzero.
+
+        :param encoding: The encoding to use for stdin, stdout, and
+            stderr. See https://docs.python.org/3/library/codecs.html
+            for valid values for this parameter.
+        :param errors: The error handling policy for the specified
+            encoding. See https://docs.python.org/3/library/codecs.html
+            for valid values for this parameter.
         """
         cmd = ['docker', 'exec', '-i']
         cmd.append(self.name)
@@ -196,21 +258,50 @@ class AutograderSandbox:
         if max_virtual_memory is not None:
             cmd += ['--max_virtual_memory', str(max_virtual_memory)]
 
+        if timeout is not None:
+            cmd += ['--timeout', str(timeout)]
+
+        if encoding is not None:
+            cmd += ['--encoding', encoding]
+
+        if errors is not None:
+            cmd += ['--encoding_error_policy', errors]
+
         if not as_root:
             cmd += ['--linux_user_id', str(self._linux_uid)]
 
         cmd += args
 
-        print('running: {}'.format(cmd), flush=True)
+        if self.debug:
+            print('running: {}'.format(cmd), flush=True)
 
-        if input_content is None:
-            input_content = ''
-        return _SubprocessRunner(cmd,
-                                 timeout=timeout,
-                                 raise_on_failure=raise_on_failure,
-                                 stdin_content=input_content)
+        try:
+            result = subprocess.run(cmd,
+                                    input=input.encode(encoding, errors=errors),
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    check=True)
+            results_json = json.loads(result.stdout.decode())
+            result.stdout = results_json['stdout']
+            result.stderr = results_json['stderr']
+            result.returncode = results_json['return_code']
 
-    def add_files(self, *filenames):
+            if results_json['timed_out']:
+                raise subprocess.TimeoutExpired(
+                    cmd, timeout, output=result.stdout, stderr=result.stderr)
+
+            if result.returncode != 0 and check:
+                raise subprocess.CalledProcessError(
+                    result.returncode, cmd,
+                    output=result.stdout, stderr=result.stderr)
+
+            return result
+        except subprocess.CalledProcessError as e:
+            print(e.stdout)
+            print(e.stderr)
+            raise
+
+    def add_files(self, *filenames: str):
         """
         Copies the specified files into the working directory of this
         sandbox.
@@ -230,7 +321,7 @@ class AutograderSandbox:
             self._chown_files(
                 [os.path.basename(filename) for filename in filenames])
 
-    def add_and_rename_file(self, filename, new_filename):
+    def add_and_rename_file(self, filename: str, new_filename: str) -> None:
         """
         Copies the specified file into the working directory of this
         sandbox and renames it to new_filename.
@@ -248,99 +339,15 @@ class AutograderSandbox:
         self.run_command(chown_cmd, as_root=True)
 
 
-# TODO: Once upgraded to Python 3.5, replace call() with the
-# new subprocess.run() method.
-class _SubprocessRunner(object):
-    """
-    Convenience wrapper for calling a subprocess and retrieving the data
-    we usually need.
-    """
-
-    def __init__(self, program_args, **kwargs):
-        self._args = program_args
-        self._timeout = kwargs.get('timeout', None)
-        self._stdin_content = kwargs.get('stdin_content', '')
-        self._merge_stdout_and_stderr = kwargs.get(
-            'merge_stdout_and_stderr', False)
-        if kwargs.get('raise_on_failure', False):
-            self._subprocess_method = subprocess.check_call
-        else:
-            self._subprocess_method = subprocess.call
-
-        self._timed_out = False
-        self._return_code = None
-        self._stdout = None
-        self._stderr = None
-
-        self._process = None
-
-        self._run()
-
-    @property
-    def timed_out(self):
-        return self._timed_out
-
-    @property
-    def return_code(self):
-        return self._return_code
-
-    @property
-    def stdout(self):
-        return self._stdout
-
-    @property
-    def stderr(self):
-        return self._stderr
-
-    @property
-    def process(self):
-        return self._process
-
-    def _run(self):
-        try:
-            with tempfile.TemporaryFile() as stdin_content, \
-                    tempfile.TemporaryFile() as stdout_dest, \
-                    tempfile.TemporaryFile() as stderr_dest:
-
-                stdin_content.write(self._stdin_content.encode('utf-8'))
-                stdin_content.seek(0)
-
-                try:
-                    self._return_code = self._subprocess_method(
-                        self._args,
-                        stdin=stdin_content,
-                        stdout=stdout_dest,
-                        stderr=stderr_dest,
-                        timeout=self._timeout
-                    )
-                    print("Finished running: ", self._args, flush=True)
-                finally:
-                    stdout_dest.seek(0)
-                    stderr_dest.seek(0)
-                    self._stdout = stdout_dest.read().decode('utf-8')
-                    self._stderr = stderr_dest.read().decode('utf-8')
-
-                    print("Return code: ", self._return_code, flush=True)
-                    print(self._stdout, flush=True)
-                    print(self._stderr, flush=True)
-        except subprocess.TimeoutExpired:
-            self._timed_out = True
-        except UnicodeDecodeError:
-            msg = ("Error reading program output: "
-                   "non-unicode characters detected")
-            self._stdout = msg
-            self._stderr = msg
-
-
 _REDIS_SETTINGS = {
     'host': os.environ.get('AG_REDIS_HOST', 'localhost'),
     'port': os.environ.get('AG_REDIS_PORT', '6379')
 }
 
 _NEXT_UID_KEY = 'sandbox_next_uid'
-redis.StrictRedis(**_REDIS_SETTINGS).setnx('sandbox_next_uid', 2000)
 
 
 def _get_next_linux_uid():
     redis_conn = redis.StrictRedis(**_REDIS_SETTINGS)
+    redis_conn.setnx('sandbox_next_uid', 2000)
     return redis_conn.incr(_NEXT_UID_KEY)

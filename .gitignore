@@ -62,3 +62,9 @@ target/
 .ipynb_checkpoints
 .DS_Store
 *.sublime-*
+venv
+docs/_build
+.vscode
+tags
+*.rdb
+non-utf.txt

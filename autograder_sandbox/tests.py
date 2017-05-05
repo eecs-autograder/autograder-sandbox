@@ -1,10 +1,13 @@
 import os
 import unittest
+from unittest import mock
 import subprocess
 import tempfile
 import multiprocessing
 import itertools
 import time
+import uuid
+import typing
 
 from collections import OrderedDict
 
@@ -24,8 +27,9 @@ def gb_to_bytes(num_gb):
 
 
 class AutograderSandboxInitTestCase(unittest.TestCase):
+
     def setUp(self):
-        self.name = 'awexome_container'
+        self.name = 'awexome_container{}'.format(uuid.uuid4().hex)
         self.environment_variables = OrderedDict(
             {'spam': 'egg', 'sausage': 42})
 
@@ -33,42 +37,44 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
         sandbox = AutograderSandbox()
         self.assertIsNotNone(sandbox.name)
         self.assertFalse(sandbox.allow_network_access)
-        self.assertIsNone(sandbox.environment_variables)
+        self.assertEqual({}, sandbox.environment_variables)
+        self.assertEqual('jameslp/autograder-sandbox', sandbox.docker_image)
 
     def test_non_default_init(self):
+        docker_image = 'waaaaluigi'
         sandbox = AutograderSandbox(
             name=self.name,
+            docker_image=docker_image,
             allow_network_access=True,
             environment_variables=self.environment_variables
         )
-        self.assertEqual(self.name,
-                         sandbox.name)
+        self.assertEqual(self.name, sandbox.name)
+        self.assertEqual(docker_image, sandbox.docker_image)
         self.assertTrue(sandbox.allow_network_access)
-        self.assertEqual(self.environment_variables,
-                         sandbox.environment_variables)
+        self.assertEqual(self.environment_variables, sandbox.environment_variables)
 
 
 class AutograderSandboxMiscTestCase(unittest.TestCase):
+
     def setUp(self):
-        self.name = 'awexome_container'
+        self.name = 'awexome_container{}'.format(uuid.uuid4().hex)
         self.environment_variables = OrderedDict(
             {'spam': 'egg', 'sausage': 42})
 
     def test_run_command_with_input(self):
         input_content = 'spam egg sausage spam'
-        with AutograderSandbox() as sandbox:
-            result = sandbox.run_command(
-                ['cat'], input_content=input_content)
+        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+            result = sandbox.run_command(['cat'], input=input_content)
             self.assertEqual(input_content, result.stdout)
 
     def test_return_code_reported_and_stderr_recorded(self):
         with AutograderSandbox() as sandbox:
             result = sandbox.run_command(['ls', 'definitely not a file'])
-            self.assertNotEqual(0, result.return_code)
+            self.assertNotEqual(0, result.returncode)
             self.assertNotEqual('', result.stderr)
 
     def test_context_manager(self):
-        with AutograderSandbox(name=self.name) as sandbox:
+        with AutograderSandbox(name=self.name) as sandbox:  # type: AutograderSandbox
             self.assertEqual(self.name, sandbox.name)
             # If the container was created successfully, we
             # should get an error if we try to create another
@@ -88,7 +94,8 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
 
         sandbox = AutograderSandbox(
             environment_variables=self.environment_variables)
-        with sandbox, tempfile.NamedTemporaryFile('w+') as f:
+        with sandbox, typing.cast(typing.TextIO,
+                                  tempfile.NamedTemporaryFile('w+')) as f:
             f.write(print_env_var_script)
             f.seek(0)
             sandbox.add_files(f.name)
@@ -98,7 +105,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             expected_output += '\n'
             self.assertEqual(expected_output, result.stdout)
 
-    def test_reinitialize(self):
+    def test_reset(self):
         with AutograderSandbox() as sandbox:
             file_to_add = os.path.abspath(__file__)
             sandbox.add_files(file_to_add)
@@ -106,7 +113,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             ls_result = sandbox.run_command(['ls']).stdout
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
 
-            sandbox.reinitialize()
+            sandbox.reset()
 
             ls_result = sandbox.run_command(['ls']).stdout
             self.assertEqual('', ls_result)
@@ -125,12 +132,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             ls_result = sandbox.run_command(['ls']).stdout
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
 
-    def test_restart_timed_out_zombie_processes_killed(self):
-        """
-        For some reason, running a program such as the one in
-        _PROG_THAT_FORKS causes subsequent docker exec or docker stop
-        comamnds to stall until the zombie process terminates.
-        """
+    def test_entire_process_tree_killed_on_timeout(self):
         for program_str in _PROG_THAT_FORKS, _PROG_WITH_SUBPROCESS_STALL:
             with AutograderSandbox() as sandbox:
                 ps_result = sandbox.run_command(['ps', '-aux']).stdout
@@ -142,16 +144,12 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
                     program_str, '.py', sandbox)
 
                 start_time = time.time()
-                result = sandbox.run_command(
-                    ['python3', script_file], timeout=1)
-                print('command exited')
-                self.assertTrue(result.timed_out)
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    sandbox.run_command(['python3', script_file], timeout=1)
 
-                print('restarting sandbox')
-                sandbox.restart()
                 time_elapsed = time.time() - start_time
                 self.assertLess(time_elapsed, _SLEEP_TIME // 2,
-                                msg='Sandbox restart took too long')
+                                msg='Killing processes took too long')
 
                 ps_result_after_restart = sandbox.run_command(
                     ['ps', '-aux']).stdout
@@ -162,15 +160,95 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
 
     def test_try_to_change_cmd_runner(self):
         runner_path = '/usr/local/bin/cmd_runner.py'
-        with AutograderSandbox() as sandbox:
+        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
             # Make sure the file path above is correct
-            sandbox.run_command(['cat', runner_path], raise_on_failure=True)
+            sandbox.run_command(['cat', runner_path], check=True)
             with self.assertRaises(subprocess.CalledProcessError):
+                sandbox.run_command(['touch', runner_path], check=True)
+
+    @mock.patch('autograder_sandbox.autograder_sandbox.subprocess.run')
+    @mock.patch('autograder_sandbox.autograder_sandbox.subprocess.check_call')
+    def test_container_create_timeout(self, mock_check_call, *args):
+        print(mock)
+        with AutograderSandbox(debug=True):
+            args, kwargs = mock_check_call.call_args
+            self.assertIsNone(kwargs['timeout'])
+
+        timeout = 42
+        with AutograderSandbox(container_create_timeout=timeout):
+            args, kwargs = mock_check_call.call_args
+            self.assertEqual(timeout, kwargs['timeout'])
+
+
+class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
+    def setUp(self):
+        self.non_utf = b'\x80 and some other stuff just because\n'
+        self.file_to_print = 'non-utf.txt'
+        with open(self.file_to_print, 'wb') as f:
+            f.write(self.non_utf)
+
+        self.escaped_non_utf = self.non_utf.decode('utf-8', 'backslashreplace')
+
+    def test_non_default_strict_encoding_errors_policy(self):
+        expected_output = '\udc80 and some other stuff just because\n'
+        with AutograderSandbox() as sandbox:
+            sandbox.add_files(self.file_to_print)
+            result = sandbox.run_command(
+                ['cat', self.file_to_print], errors='surrogateescape')
+            self.assertEqual(expected_output, result.stdout)
+
+    def test_non_unicode_chars_in_normal_output(self):
+        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+            sandbox.add_files(self.file_to_print)
+
+            result = sandbox.run_command(['cat', self.file_to_print])
+            print(result.stdout)
+            self.assertEqual(self.escaped_non_utf, result.stdout)
+
+            result = sandbox.run_command(['bash', '-c', '>&2 cat ' + self.file_to_print])
+            print(result.stderr)
+            self.assertEqual(self.escaped_non_utf, result.stderr)
+
+    def test_output_encoded_on_timeout(self):
+        with AutograderSandbox() as sandbox:
+            sandbox.add_files(self.file_to_print)
+
+            with self.assertRaises(subprocess.TimeoutExpired) as cm:
                 sandbox.run_command(
-                    ['touch', runner_path], raise_on_failure=True)
+                    ['bash', '-c', 'cat {}; sleep 5'.format(self.file_to_print)],
+                    timeout=1)
+            self.assertEqual(self.escaped_non_utf, cm.exception.stdout)
+
+        with AutograderSandbox() as sandbox:
+            sandbox.add_files(self.file_to_print)
+
+            with self.assertRaises(subprocess.TimeoutExpired) as cm:
+                sandbox.run_command(
+                    ['bash', '-c', '>&2 cat {}; sleep 5'.format(self.file_to_print)],
+                    timeout=1)
+            self.assertEqual(self.escaped_non_utf, cm.exception.stderr)
+
+    def test_output_encoded_on_process_error(self):
+        with AutograderSandbox() as sandbox:
+            sandbox.add_files(self.file_to_print)
+
+            with self.assertRaises(subprocess.CalledProcessError) as cm:
+                sandbox.run_command(
+                    ['bash', '-c', 'cat {}; exit 1'.format(self.file_to_print)],
+                    check=True)
+            self.assertEqual(self.escaped_non_utf, cm.exception.stdout)
+
+        with AutograderSandbox() as sandbox:
+            sandbox.add_files(self.file_to_print)
+
+            with self.assertRaises(subprocess.CalledProcessError) as cm:
+                sandbox.run_command(
+                    ['bash', '-c', '>&2 cat {}; exit 1'.format(self.file_to_print)],
+                    check=True)
+            self.assertEqual(self.escaped_non_utf, cm.exception.stderr)
 
 
-_SLEEP_TIME = 20
+_SLEEP_TIME = 6
 
 _PROG_THAT_FORKS = """
 import subprocess
@@ -190,6 +268,7 @@ print('goodbye', flush=True)
 
 
 class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
+
     def setUp(self):
         self.sandbox = AutograderSandbox()
 
@@ -199,38 +278,39 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
         stdout_content = "hello world"
         with self.sandbox:
             cmd_result = self.sandbox.run_command(["echo", stdout_content])
-            self.assertEqual(0, cmd_result.return_code)
+            self.assertEqual(0, cmd_result.returncode)
             self.assertEqual(stdout_content + '\n', cmd_result.stdout)
 
     def test_run_illegal_command_non_root(self):
         with self.sandbox:
             cmd_result = self.sandbox.run_command(self.root_cmd)
-            self.assertNotEqual(0, cmd_result.return_code)
+            self.assertNotEqual(0, cmd_result.returncode)
             self.assertNotEqual("", cmd_result.stderr)
 
     def test_run_command_as_root(self):
         with self.sandbox:
             cmd_result = self.sandbox.run_command(self.root_cmd, as_root=True)
-            self.assertEqual(0, cmd_result.return_code)
+            self.assertEqual(0, cmd_result.returncode)
             self.assertEqual("", cmd_result.stderr)
 
     def test_run_command_raise_on_error(self):
         """
-        Tests that an exception is thrown only when raise_on_failure is True
+        Tests that an exception is thrown only when check is True
         and the command exits with nonzero status.
         """
         with self.sandbox:
             # No exception should be raised.
-            cmd_result = self.sandbox.run_command(self.root_cmd,
-                                                  as_root=True,
-                                                  raise_on_failure=True)
-            self.assertEqual(0, cmd_result.return_code)
+            cmd_result = self.sandbox.run_command(
+                self.root_cmd, as_root=True,
+                check=True)  # type: subprocess.CompletedProcess
+            self.assertEqual(0, cmd_result.returncode)
 
             with self.assertRaises(subprocess.CalledProcessError):
-                self.sandbox.run_command(self.root_cmd, raise_on_failure=True)
+                self.sandbox.run_command(self.root_cmd, check=True)
 
 
 class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
+
     def setUp(self):
         self.sandbox = AutograderSandbox()
 
@@ -239,8 +319,8 @@ class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
 
     def test_run_command_timeout_exceeded(self):
         with self.sandbox:
-            cmd_result = self.sandbox.run_command(["sleep", "10"], timeout=1)
-            self.assertTrue(cmd_result.timed_out)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.sandbox.run_command(["sleep", "10"], timeout=1)
 
     def test_command_exceeds_process_limit(self):
         process_limit = 0
@@ -408,7 +488,7 @@ def _run_stack_usage_prog(mem_to_use, mem_limit, sandbox):
         exe_name = _compile_in_sandbox(sandbox, filename)
         result = sandbox.run_command(
             ['./' + exe_name], max_stack_size=mem_limit)
-        return result.return_code
+        return result.returncode
 
     return _call_function_and_allocate_sandbox_if_needed(_run_prog, sandbox)
 
@@ -438,7 +518,7 @@ def _run_heap_usage_prog(mem_to_use, mem_limit, sandbox):
         result = result = sandbox.run_command(
             ['./' + exe_name], max_virtual_memory=mem_limit)
 
-        return result.return_code
+        return result.returncode
 
     return _call_function_and_allocate_sandbox_if_needed(_run_prog, sandbox)
 
@@ -464,7 +544,7 @@ def _compile_in_sandbox(sandbox, *files_to_compile):
     exe_name = 'prog'
     sandbox.run_command(
         ['g++', '--std=c++11'] + list(files_to_compile) +
-        ['-o', exe_name], raise_on_failure=True)
+        ['-o', exe_name], check=True)
     return exe_name
 
 
@@ -477,7 +557,7 @@ def _run_process_spawning_prog(num_processes_to_spawn, process_limit,
 
         result = sandbox.run_command(['python3', filename],
                                      max_num_processes=process_limit)
-        return result.return_code
+        return result.returncode
 
     return _call_function_and_allocate_sandbox_if_needed(_run_prog, sandbox)
 
@@ -524,6 +604,7 @@ _GOOGLE_IP_ADDR = "216.58.214.196"
 
 
 class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
+
     def setUp(self):
         super().setUp()
 
@@ -532,31 +613,31 @@ class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
     def test_networking_disabled(self):
         with AutograderSandbox() as sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertNotEqual(0, result.return_code)
+            self.assertNotEqual(0, result.returncode)
 
     def test_networking_enabled(self):
         with AutograderSandbox(allow_network_access=True) as sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertEqual(0, result.return_code)
+            self.assertEqual(0, result.returncode)
 
     def test_set_allow_network_access(self):
         sandbox = AutograderSandbox()
         self.assertFalse(sandbox.allow_network_access)
         with sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertNotEqual(0, result.return_code)
+            self.assertNotEqual(0, result.returncode)
 
         sandbox.allow_network_access = True
         self.assertTrue(sandbox.allow_network_access)
         with sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertEqual(0, result.return_code)
+            self.assertEqual(0, result.returncode)
 
         sandbox.allow_network_access = False
         self.assertFalse(sandbox.allow_network_access)
         with sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertNotEqual(0, result.return_code)
+            self.assertNotEqual(0, result.returncode)
 
     def test_error_set_allow_network_access_while_running(self):
         with AutograderSandbox() as sandbox:
@@ -565,15 +646,17 @@ class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
 
             self.assertFalse(sandbox.allow_network_access)
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertNotEqual(0, result.return_code)
+            self.assertNotEqual(0, result.returncode)
 
 
 class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
+
     def test_copy_files_into_sandbox(self):
         files = []
         try:
             for i in range(10):
-                f = tempfile.NamedTemporaryFile(mode='w+')
+                f = typing.cast(typing.TextIO,
+                                tempfile.NamedTemporaryFile(mode='w+'))
                 f.write('this is file {}'.format(i))
                 f.seek(0)
                 files.append(f)
@@ -602,7 +685,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
 
     def test_copy_and_rename_file_into_sandbox(self):
         expected_content = 'this is a file'
-        with tempfile.NamedTemporaryFile(mode='w+') as f:
+        with typing.cast(typing.TextIO, tempfile.NamedTemporaryFile('w+')) as f:
             f.write(expected_content)
             f.seek(0)
 

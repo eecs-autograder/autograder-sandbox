@@ -1,4 +1,5 @@
-FROM phusion/baseimage:latest
+
+FROM ubuntu:latest
 
 RUN apt-get update --fix-missing
 
@@ -19,4 +20,3 @@ COPY cmd_runner.py /usr/local/bin/cmd_runner.py
 RUN chmod 555 /usr/local/bin/cmd_runner.py
 
 WORKDIR /home/autograder/working_dir
-
