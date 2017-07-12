@@ -20,7 +20,7 @@ By default, the sandbox program tries to connect to Redis at localhost:6379. To 
 and AG_REDIS_PORT environment variables, respectively.
 
 ### Docker Image
-The Docker image used by default is [jameslp/autograder-sandbox:<version>](https://hub.docker.com/r/jameslp/autograder-sandbox/),
+The Docker image used by default is [`jameslp/autograder-sandbox:<version>`](https://hub.docker.com/r/jameslp/autograder-sandbox/),
 where `<version>` is the version number of the autograder-sandbox package you're using.
 If using a custom image, begin your custom Dockerfile with `FROM jameslp/autograder-sandbox:<version>`. Then, when creating the sandbox instance, pass the name of your custom image to the `docker_image` parameter. Alternatively, you can set the SANDBOX_DOCKER_IMAGE environment variable to that name.
 
