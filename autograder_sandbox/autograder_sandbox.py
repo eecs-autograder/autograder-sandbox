@@ -309,8 +309,10 @@ class AutograderSandbox:
         sandbox.
         The filenames specified can be absolute paths or relative paths
         to the current working directory.
+
         :param owner: The name of a user who should be granted ownership of
-            the newly added files. Must be either SANDBOX_USERNAME or 'root',
+            the newly added files.
+            Must be either autograder_sandbox.SANDBOX_USERNAME or 'root',
             otherwise ValueError will be raised.
         :param read_only: If true, the new files' permissions will be set to
             read-only.
