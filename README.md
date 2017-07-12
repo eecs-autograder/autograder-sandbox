@@ -39,14 +39,20 @@ Versioning scheme:
 - 0.x.0 releases contain new features.
 - x.0.0 releases may contain backwards-incompatible changes.
 
+2.0.2 - Changes to how commands are run in the sandbox.
+- Issues fixed:
+    - [#2](https://github.com/eecs280staff/autograder-sandbox/issues/2)
+    - [#1](https://github.com/eecs280staff/autograder-sandbox/issues/1)
+    - [#11](https://github.com/eecs280staff/autograder-sandbox/issues/11)
+    
 2.0.1 - Hotfix for output decoding issue.
 - Previously, stdout and stderr were not being decoded on TimeoutExpired or CalledProcessError. This release fixes this.
 
 2.0.0 - Removes support for versions of Python < 3.5
 - Issues fixed:
-    - [#4](/james-perretta/autograder-sandbox/issues/4)
-    - [#5](/james-perretta/autograder-sandbox/issues/5)
-    - [#6](/james-perretta/autograder-sandbox/issues/6)
+    - [#4](https://github.com/eecs280staff/autograder-sandbox/issues/4)
+    - [#5](https://github.com/eecs280staff/autograder-sandbox/issues/5)
+    - [#6](https://github.com/eecs280staff/autograder-sandbox/issues/6)
 - Changes to AutograderSandbox constructor parameters:
     - Added `docker_image` and `container_create_timeout`
 - Changes to AutograderSandbox.run_command() parameters:
