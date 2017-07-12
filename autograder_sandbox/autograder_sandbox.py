@@ -6,7 +6,7 @@ import tempfile
 import uuid
 from typing import List
 
-import redis  # type: ignore
+import redis
 
 VERSION = '2.1.0'
 
