@@ -655,8 +655,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
         files = []
         try:
             for i in range(10):
-                f = typing.cast(typing.TextIO,
-                                tempfile.NamedTemporaryFile(mode='w+'))
+                f = tempfile.NamedTemporaryFile(mode='w+')
                 f.write('this is file {}'.format(i))
                 f.seek(0)
                 files.append(f)
@@ -685,7 +684,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
 
     def test_copy_and_rename_file_into_sandbox(self):
         expected_content = 'this is a file'
-        with typing.cast(typing.TextIO, tempfile.NamedTemporaryFile('w+')) as f:
+        with tempfile.NamedTemporaryFile('w+') as f:
             f.write(expected_content)
             f.seek(0)
 
@@ -702,6 +701,66 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
                 actual_content = sandbox.run_command(['cat', new_name]).stdout
                 self.assertEqual(expected_content, actual_content)
 
+    def test_add_files_root_owner_and_read_only(self):
+        original_content = "some stuff you shouldn't change"
+        overwrite_content = 'lol I changed it anyway u nub'
+        with tempfile.NamedTemporaryFile('w+') as f:
+            f.write(original_content)
+            f.seek(0)
+
+            added_filename = os.path.basename(f.name)
+
+            with AutograderSandbox() as sandbox:
+                sandbox.add_files(f.name, owner='root', read_only=True)
+
+                self.assertEqual(original_content,
+                                 sandbox.run_command(['cat', added_filename], check=True).stdout)
+
+                with self.assertRaises(subprocess.CalledProcessError):
+                    sandbox.run_command(['touch', added_filename], check=True)
+
+                with self.assertRaises(subprocess.CalledProcessError):
+                    sandbox.run_command(
+                        ['bash', '-c',
+                         "printf '{}' > {}".format(overwrite_content, added_filename)],
+                        check=True)
+
+                self.assertEqual(original_content,
+                                 sandbox.run_command(['cat', added_filename], check=True).stdout)
+
+                root_touch_result = sandbox.run_command(
+                    ['touch', added_filename], check=True, as_root=True)
+                self.assertEqual(0, root_touch_result.returncode)
+
+                sandbox.run_command(
+                    ['bash', '-c', "printf '{}' > {}".format(overwrite_content, added_filename)],
+                    as_root=True, check=True)
+                self.assertEqual(overwrite_content,
+                                 sandbox.run_command(['cat', added_filename]).stdout)
+
+    def test_overwrite_non_read_only_file(self):
+        original_content = "some stuff"
+        overwrite_content = 'some new stuff'
+        with tempfile.NamedTemporaryFile('w+') as f:
+            f.write(original_content)
+            f.seek(0)
+
+            added_filename = os.path.basename(f.name)
+
+            with AutograderSandbox() as sandbox:
+                sandbox.add_files(f.name)
+
+                self.assertEqual(original_content,
+                                 sandbox.run_command(['cat', added_filename], check=True).stdout)
+                sandbox.run_command(
+                    ['bash', '-c', "printf '{}' > {}".format(overwrite_content, added_filename)])
+                self.assertEqual(overwrite_content,
+                                 sandbox.run_command(['cat', added_filename], check=True).stdout)
+
+    def test_error_add_files_invalid_owner(self):
+        with AutograderSandbox() as sandbox:
+            with self.assertRaises(ValueError):
+                sandbox.add_files('steve', owner='not_an_owner')
 
 if __name__ == '__main__':
     unittest.main()

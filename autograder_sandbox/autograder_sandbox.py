@@ -303,13 +303,21 @@ class AutograderSandbox:
             print(e.stderr)
             raise
 
-    def add_files(self, *filenames: str):
+    def add_files(self, *filenames: str, owner: str=SANDBOX_USERNAME, read_only: bool=False):
         """
         Copies the specified files into the working directory of this
         sandbox.
         The filenames specified can be absolute paths or relative paths
         to the current working directory.
+        :param owner: The name of a user who should be granted ownership of
+            the newly added files. Must be either SANDBOX_USERNAME or 'root',
+            otherwise ValueError will be raised.
+        :param read_only: If true, the new files' permissions will be set to
+            read-only.
         """
+        if owner != SANDBOX_USERNAME and owner != 'root':
+            raise ValueError('Invalid value for parameter "owner": {}'.format(owner))
+
         with tempfile.TemporaryFile() as f, \
                 tarfile.TarFile(fileobj=f, mode='w') as tar_file:
             for filename in filenames:
@@ -320,8 +328,14 @@ class AutograderSandbox:
                 ['docker', 'cp', '-',
                  self.name + ':' + SANDBOX_WORKING_DIR_NAME],
                 stdin=f)
-            self._chown_files(
-                [os.path.basename(filename) for filename in filenames])
+
+            file_basenames = [os.path.basename(filename) for filename in filenames]
+            if owner == SANDBOX_USERNAME:
+                self._chown_files(file_basenames)
+
+            if read_only:
+                chmod_cmd = ['chmod', '444'] + file_basenames
+                self.run_command(chmod_cmd, as_root=True)
 
     def add_and_rename_file(self, filename: str, new_filename: str) -> None:
         """
