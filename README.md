@@ -39,6 +39,13 @@ Versioning scheme:
 - 0.x.0 releases contain new features.
 - x.0.0 releases may contain backwards-incompatible changes.
 
+2.1.0 - Permissions for files added to sandbox
+- Issues fixed:
+    - [#10](https://github.com/eecs280staff/autograder-sandbox/issues/10)
+        - Added two arguments to the `add_files` function: `owner` and `read_only`.
+          This gives the user the option to decide whether files added to the sandbox should be owned by
+          'autograder' or 'root' and whether the files should be read-only.
+
 2.0.1 - Hotfix for output decoding issue.
 - Previously, stdout and stderr were not being decoded on TimeoutExpired or CalledProcessError. This release fixes this.
 

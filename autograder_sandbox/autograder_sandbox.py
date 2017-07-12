@@ -8,7 +8,7 @@ from typing import List
 
 import redis  # type: ignore
 
-VERSION = '2.0.2'
+VERSION = '2.1.0'
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
