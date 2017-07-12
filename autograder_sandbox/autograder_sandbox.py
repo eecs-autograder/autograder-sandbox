@@ -8,11 +8,13 @@ from typing import List
 
 import redis  # type: ignore
 
+VERSION = '2.0.2'
+
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
 SANDBOX_USERNAME = 'autograder'
 SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE',
-                                      'jameslp/autograder-sandbox')
+                                      'jameslp/autograder-sandbox:{}'.format(VERSION))
 
 
 class AutograderSandbox:

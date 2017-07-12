@@ -1,9 +1,10 @@
 #! /usr/bin/env python3
 
 from setuptools import setup  # type: ignore
+import autograder_sandbox
 
 setup(name='autograder-sandbox',
-      version='2.0.1',
+      version=autograder_sandbox.VERSION,
       description=('Python library for running untrusted '
                    'code in Docker containers'),
       author='James Perretta',

@@ -11,7 +11,7 @@ import typing
 
 from collections import OrderedDict
 
-from .autograder_sandbox import AutograderSandbox
+from autograder_sandbox import AutograderSandbox, VERSION
 
 
 def kb_to_bytes(num_kb):
@@ -38,7 +38,7 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
         self.assertIsNotNone(sandbox.name)
         self.assertFalse(sandbox.allow_network_access)
         self.assertEqual({}, sandbox.environment_variables)
-        self.assertEqual('jameslp/autograder-sandbox', sandbox.docker_image)
+        self.assertEqual('jameslp/autograder-sandbox:{}'.format(VERSION), sandbox.docker_image)
 
     def test_non_default_init(self):
         docker_image = 'waaaaluigi'
@@ -166,8 +166,8 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 sandbox.run_command(['touch', runner_path], check=True)
 
-    @mock.patch('autograder_sandbox.autograder_sandbox.subprocess.run')
-    @mock.patch('autograder_sandbox.autograder_sandbox.subprocess.check_call')
+    @mock.patch('subprocess.run')
+    @mock.patch('subprocess.check_call')
     def test_container_create_timeout(self, mock_check_call, *args):
         print(mock)
         with AutograderSandbox(debug=True):
