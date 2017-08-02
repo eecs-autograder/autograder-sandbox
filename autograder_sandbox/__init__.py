@@ -1,1 +1,1 @@
-from .autograder_sandbox import AutograderSandbox, VERSION, SANDBOX_USERNAME, SANDBOX_DOCKER_IMAGE
+from .autograder_sandbox import AutograderSandbox, CompletedCommand, VERSION, SANDBOX_USERNAME, SANDBOX_DOCKER_IMAGE
