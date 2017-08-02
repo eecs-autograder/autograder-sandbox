@@ -39,6 +39,15 @@ Versioning scheme:
 - 0.x.0 releases contain new features.
 - x.0.0 releases may contain backwards-incompatible changes.
 
+3.0.0 - Better handling of large IO 
+- Issues fixed: 
+    - [#12](https://github.com/eecs280staff/autograder-sandbox/issues/12)
+- Changes to `run_command` function:
+    - `input` is now called `stdin` and takes in a file object.
+    - The return value is now a `CompletedCommand`
+    - `TimeoutExpired` is not raised on command timeout. Instead, `CompletedCommand` has a `timed_out` attribute.
+    - The `stdout` and `stderr` fields of `CompletedCommand` are file objects.
+
 2.1.0 - Permissions for files added to sandbox
 - Issues fixed:
     - [#10](https://github.com/eecs280staff/autograder-sandbox/issues/10)
