@@ -30,7 +30,7 @@ from autograder_sandbox import AutograderSandbox
 
 with AutograderSandbox() as sandbox:
     result = sandbox.run_command(['echo', 'hello world'], timeout=10)
-    print(result.stdout)
+    print(result.stdout.read().decode())
 ```
 
 ### Changelog
