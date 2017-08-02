@@ -347,9 +347,9 @@ class CompletedCommand:
         """
         :param return_code: The return code of the command,
             or None if the command timed out.
-        :param stdout: A BinaryIO object containing the
+        :param stdout: A file object containing the
             stdout content of the command.
-        :param stderr: A BinaryIO object containing the
+        :param stderr: A file object containing the
             stderr content of the command.
         :param timed_out: Whether the command exceeded the time limit.
         """
