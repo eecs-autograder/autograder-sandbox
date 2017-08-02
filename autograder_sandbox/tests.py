@@ -1,3 +1,4 @@
+import io
 import os
 import unittest
 from unittest import mock
@@ -61,16 +62,55 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         self.environment_variables = OrderedDict(
             {'spam': 'egg', 'sausage': 42})
 
-    def test_run_command_with_input(self):
-        input_content = 'spam egg sausage spam'
+        self.stdin = tempfile.NamedTemporaryFile()
+        self.stdout = tempfile.NamedTemporaryFile()
+        self.stderr = tempfile.NamedTemporaryFile()
+
+    def tearDown(self):
+        self.stdin.close()
+        self.stdout.close()
+        self.stderr.close()
+
+    def _write_and_seek(self, file_obj, content):
+        file_obj.write(content)
+        file_obj.seek(0)
+
+    def test_very_large_io(self):
+        repeat_str = b'a' * 1000
+        num_repeats = 1000000  # 1 GB
+        for i in range(num_repeats):
+            self.stdin.write(repeat_str)
         with AutograderSandbox() as sandbox:  # type: AutograderSandbox
-            result = sandbox.run_command(['cat'], input=input_content)
-            self.assertEqual(input_content, result.stdout)
+            self.stdin.seek(0)
+            start = time.time()
+            result = sandbox.run_command(['cat'], stdin=self.stdin)
+            print('Ran command that read and printed {} bytes to stdout in {}'.format(
+                    num_repeats * len(repeat_str), time.time() - start))
+            stdout_size = os.path.getsize(result.stdout.name)
+            print(stdout_size)
+            self.assertEqual(len(repeat_str) * num_repeats, stdout_size)
+
+        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+            self.stdin.seek(0)
+            start = time.time()
+            result = sandbox.run_command(['bash', '-c', '>&2 cat'], stdin=self.stdin)
+            print('Ran command that read and printed {} bytes to stderr in {}'.format(
+                num_repeats * len(repeat_str), time.time() - start))
+            stderr_size = os.path.getsize(result.stderr.name)
+            print(stderr_size)
+            self.assertEqual(len(repeat_str) * num_repeats, stderr_size)
+
+    def test_run_command_with_input(self):
+        expected_stdout = b'spam egg sausage spam'
+        self._write_and_seek(self.stdin, expected_stdout)
+        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+            result = sandbox.run_command(['cat'], stdin=self.stdin)
+            self.assertEqual(expected_stdout, result.stdout.read())
 
     def test_return_code_reported_and_stderr_recorded(self):
         with AutograderSandbox() as sandbox:
             result = sandbox.run_command(['ls', 'definitely not a file'])
-            self.assertNotEqual(0, result.returncode)
+            self.assertNotEqual(0, result.return_code)
             self.assertNotEqual('', result.stderr)
 
     def test_context_manager(self):
@@ -103,7 +143,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             expected_output = ' '.join(
                 str(val) for val in self.environment_variables.values())
             expected_output += '\n'
-            self.assertEqual(expected_output, result.stdout)
+            self.assertEqual(expected_output, result.stdout.read().decode())
 
     def test_reset(self):
         with AutograderSandbox() as sandbox:
@@ -111,11 +151,11 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             sandbox.add_files(file_to_add)
 
             ls_result = sandbox.run_command(['ls']).stdout
-            self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
+            self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result.read().decode())
 
             sandbox.reset()
 
-            ls_result = sandbox.run_command(['ls']).stdout
+            ls_result = sandbox.run_command(['ls']).stdout.read().decode()
             self.assertEqual('', ls_result)
 
     def test_restart_added_files_preserved(self):
@@ -123,19 +163,19 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             file_to_add = os.path.abspath(__file__)
             sandbox.add_files(file_to_add)
 
-            ls_result = sandbox.run_command(['ls']).stdout
+            ls_result = sandbox.run_command(['ls']).stdout.read().decode()
             print(ls_result)
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
 
             sandbox.restart()
 
-            ls_result = sandbox.run_command(['ls']).stdout
+            ls_result = sandbox.run_command(['ls']).stdout.read().decode()
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
 
     def test_entire_process_tree_killed_on_timeout(self):
         for program_str in _PROG_THAT_FORKS, _PROG_WITH_SUBPROCESS_STALL:
             with AutograderSandbox() as sandbox:
-                ps_result = sandbox.run_command(['ps', '-aux']).stdout
+                ps_result = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
                 print(ps_result)
                 num_ps_lines = len(ps_result.split('\n'))
                 print(num_ps_lines)
@@ -144,15 +184,15 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
                     program_str, '.py', sandbox)
 
                 start_time = time.time()
-                with self.assertRaises(subprocess.TimeoutExpired):
-                    sandbox.run_command(['python3', script_file], timeout=1)
+                result = sandbox.run_command(['python3', script_file], timeout=1)
+                self.assertTrue(result.timed_out)
 
                 time_elapsed = time.time() - start_time
                 self.assertLess(time_elapsed, _SLEEP_TIME // 2,
                                 msg='Killing processes took too long')
 
                 ps_result_after_restart = sandbox.run_command(
-                    ['ps', '-aux']).stdout
+                    ['ps', '-aux']).stdout.read().decode()
                 print(ps_result_after_restart)
                 num_ps_lines_after_restart = len(
                     ps_result_after_restart.split('\n'))
@@ -183,52 +223,49 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
 class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
     def setUp(self):
         self.non_utf = b'\x80 and some other stuff just because\n'
+        with self.assertRaises(UnicodeDecodeError):
+            self.non_utf.decode()
         self.file_to_print = 'non-utf.txt'
         with open(self.file_to_print, 'wb') as f:
             f.write(self.non_utf)
 
-        self.escaped_non_utf = self.non_utf.decode('utf-8', 'backslashreplace')
-
-    def test_non_default_strict_encoding_errors_policy(self):
-        expected_output = '\udc80 and some other stuff just because\n'
-        with AutograderSandbox() as sandbox:
-            sandbox.add_files(self.file_to_print)
-            result = sandbox.run_command(
-                ['cat', self.file_to_print], errors='surrogateescape')
-            self.assertEqual(expected_output, result.stdout)
+    def tearDown(self):
+        os.remove(self.file_to_print)
 
     def test_non_unicode_chars_in_normal_output(self):
         with AutograderSandbox() as sandbox:  # type: AutograderSandbox
             sandbox.add_files(self.file_to_print)
 
             result = sandbox.run_command(['cat', self.file_to_print])
-            print(result.stdout)
-            self.assertEqual(self.escaped_non_utf, result.stdout)
+            stdout = result.stdout.read()
+            print(stdout)
+            self.assertEqual(self.non_utf, stdout)
 
             result = sandbox.run_command(['bash', '-c', '>&2 cat ' + self.file_to_print])
-            print(result.stderr)
-            self.assertEqual(self.escaped_non_utf, result.stderr)
+            stderr = result.stderr.read()
+            print(stderr)
+            self.assertEqual(self.non_utf, stderr)
 
-    def test_output_encoded_on_timeout(self):
+    def test_non_unicode_chars_in_output_command_timed_out(self):
         with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
-            with self.assertRaises(subprocess.TimeoutExpired) as cm:
-                sandbox.run_command(
-                    ['bash', '-c', 'cat {}; sleep 5'.format(self.file_to_print)],
-                    timeout=1)
-            self.assertEqual(self.escaped_non_utf, cm.exception.stdout)
+            result = sandbox.run_command(
+                ['bash', '-c', 'cat {}; sleep 5'.format(self.file_to_print)],
+                timeout=1)
+            self.assertTrue(result.timed_out)
+            self.assertEqual(self.non_utf, result.stdout.read())
 
         with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
-            with self.assertRaises(subprocess.TimeoutExpired) as cm:
-                sandbox.run_command(
-                    ['bash', '-c', '>&2 cat {}; sleep 5'.format(self.file_to_print)],
-                    timeout=1)
-            self.assertEqual(self.escaped_non_utf, cm.exception.stderr)
+            result = sandbox.run_command(
+                ['bash', '-c', '>&2 cat {}; sleep 5'.format(self.file_to_print)],
+                timeout=1)
+            self.assertTrue(result.timed_out)
+            self.assertEqual(self.non_utf, result.stderr.read())
 
-    def test_output_encoded_on_process_error(self):
+    def test_non_unicode_chars_in_output_on_process_error(self):
         with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
@@ -236,7 +273,7 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
                 sandbox.run_command(
                     ['bash', '-c', 'cat {}; exit 1'.format(self.file_to_print)],
                     check=True)
-            self.assertEqual(self.escaped_non_utf, cm.exception.stdout)
+            self.assertEqual(self.non_utf, cm.exception.stdout.read())
 
         with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
@@ -245,7 +282,7 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
                 sandbox.run_command(
                     ['bash', '-c', '>&2 cat {}; exit 1'.format(self.file_to_print)],
                     check=True)
-            self.assertEqual(self.escaped_non_utf, cm.exception.stderr)
+            self.assertEqual(self.non_utf, cm.exception.stderr.read())
 
 
 _SLEEP_TIME = 6
@@ -276,22 +313,23 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
 
     def test_run_legal_command_non_root(self):
         stdout_content = "hello world"
+        expected_output = stdout_content.encode() + b'\n'
         with self.sandbox:
             cmd_result = self.sandbox.run_command(["echo", stdout_content])
-            self.assertEqual(0, cmd_result.returncode)
-            self.assertEqual(stdout_content + '\n', cmd_result.stdout)
+            self.assertEqual(0, cmd_result.return_code)
+            self.assertEqual(expected_output, cmd_result.stdout.read())
 
     def test_run_illegal_command_non_root(self):
         with self.sandbox:
             cmd_result = self.sandbox.run_command(self.root_cmd)
-            self.assertNotEqual(0, cmd_result.returncode)
+            self.assertNotEqual(0, cmd_result.return_code)
             self.assertNotEqual("", cmd_result.stderr)
 
     def test_run_command_as_root(self):
         with self.sandbox:
             cmd_result = self.sandbox.run_command(self.root_cmd, as_root=True)
-            self.assertEqual(0, cmd_result.returncode)
-            self.assertEqual("", cmd_result.stderr)
+            self.assertEqual(0, cmd_result.return_code)
+            self.assertEqual(b"", cmd_result.stderr.read())
 
     def test_run_command_raise_on_error(self):
         """
@@ -300,10 +338,8 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
         """
         with self.sandbox:
             # No exception should be raised.
-            cmd_result = self.sandbox.run_command(
-                self.root_cmd, as_root=True,
-                check=True)  # type: subprocess.CompletedProcess
-            self.assertEqual(0, cmd_result.returncode)
+            cmd_result = self.sandbox.run_command(self.root_cmd, as_root=True, check=True)
+            self.assertEqual(0, cmd_result.return_code)
 
             with self.assertRaises(subprocess.CalledProcessError):
                 self.sandbox.run_command(self.root_cmd, check=True)
@@ -319,8 +355,8 @@ class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
 
     def test_run_command_timeout_exceeded(self):
         with self.sandbox:
-            with self.assertRaises(subprocess.TimeoutExpired):
-                self.sandbox.run_command(["sleep", "10"], timeout=1)
+            result = self.sandbox.run_command(["sleep", "10"], timeout=1)
+            self.assertTrue(result.timed_out)
 
     def test_command_exceeds_process_limit(self):
         process_limit = 0
@@ -488,7 +524,7 @@ def _run_stack_usage_prog(mem_to_use, mem_limit, sandbox):
         exe_name = _compile_in_sandbox(sandbox, filename)
         result = sandbox.run_command(
             ['./' + exe_name], max_stack_size=mem_limit)
-        return result.returncode
+        return result.return_code
 
     return _call_function_and_allocate_sandbox_if_needed(_run_prog, sandbox)
 
@@ -518,7 +554,7 @@ def _run_heap_usage_prog(mem_to_use, mem_limit, sandbox):
         result = result = sandbox.run_command(
             ['./' + exe_name], max_virtual_memory=mem_limit)
 
-        return result.returncode
+        return result.return_code
 
     return _call_function_and_allocate_sandbox_if_needed(_run_prog, sandbox)
 
@@ -557,7 +593,7 @@ def _run_process_spawning_prog(num_processes_to_spawn, process_limit,
 
         result = sandbox.run_command(['python3', filename],
                                      max_num_processes=process_limit)
-        return result.returncode
+        return result.return_code
 
     return _call_function_and_allocate_sandbox_if_needed(_run_prog, sandbox)
 
@@ -613,31 +649,31 @@ class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
     def test_networking_disabled(self):
         with AutograderSandbox() as sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertNotEqual(0, result.returncode)
+            self.assertNotEqual(0, result.return_code)
 
     def test_networking_enabled(self):
         with AutograderSandbox(allow_network_access=True) as sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertEqual(0, result.returncode)
+            self.assertEqual(0, result.return_code)
 
     def test_set_allow_network_access(self):
         sandbox = AutograderSandbox()
         self.assertFalse(sandbox.allow_network_access)
         with sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertNotEqual(0, result.returncode)
+            self.assertNotEqual(0, result.return_code)
 
         sandbox.allow_network_access = True
         self.assertTrue(sandbox.allow_network_access)
         with sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertEqual(0, result.returncode)
+            self.assertEqual(0, result.return_code)
 
         sandbox.allow_network_access = False
         self.assertFalse(sandbox.allow_network_access)
         with sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertNotEqual(0, result.returncode)
+            self.assertNotEqual(0, result.return_code)
 
     def test_error_set_allow_network_access_while_running(self):
         with AutograderSandbox() as sandbox:
@@ -646,7 +682,7 @@ class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
 
             self.assertFalse(sandbox.allow_network_access)
             result = sandbox.run_command(self.google_ping_cmd)
-            self.assertNotEqual(0, result.returncode)
+            self.assertNotEqual(0, result.return_code)
 
 
 class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
@@ -665,9 +701,9 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
             with AutograderSandbox() as sandbox:
                 sandbox.add_files(*filenames)
 
-                ls_result = sandbox.run_command(['ls'])
+                ls_result = sandbox.run_command(['ls']).stdout.read().decode()
                 actual_filenames = [
-                    filename.strip() for filename in ls_result.stdout.split()]
+                    filename.strip() for filename in ls_result.split()]
                 expected_filenames = [
                     os.path.basename(filename) for filename in filenames]
                 self.assertCountEqual(expected_filenames, actual_filenames)
@@ -676,7 +712,8 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
                     file_.seek(0)
                     expected_content = file_.read()
                     actual_content = sandbox.run_command(
-                        ['cat', os.path.basename(file_.name)]).stdout
+                        ['cat', os.path.basename(file_.name)]
+                    ).stdout.read().decode()
                     self.assertEqual(expected_content, actual_content)
         finally:
             for file_ in files:
@@ -692,13 +729,12 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
                 new_name = 'new_filename.txt'
                 sandbox.add_and_rename_file(f.name, new_name)
 
-                ls_result = sandbox.run_command(['ls'])
-                actual_filenames = [
-                    filename.strip() for filename in ls_result.stdout.split()]
+                ls_result = sandbox.run_command(['ls']).stdout.read().decode()
+                actual_filenames = [filename.strip() for filename in ls_result.split()]
                 expected_filenames = [new_name]
                 self.assertCountEqual(expected_filenames, actual_filenames)
 
-                actual_content = sandbox.run_command(['cat', new_name]).stdout
+                actual_content = sandbox.run_command(['cat', new_name]).stdout.read().decode()
                 self.assertEqual(expected_content, actual_content)
 
     def test_add_files_root_owner_and_read_only(self):
@@ -713,8 +749,10 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
             with AutograderSandbox() as sandbox:
                 sandbox.add_files(f.name, owner='root', read_only=True)
 
-                self.assertEqual(original_content,
-                                 sandbox.run_command(['cat', added_filename], check=True).stdout)
+                actual_content = sandbox.run_command(
+                    ['cat', added_filename], check=True
+                ).stdout.read().decode()
+                self.assertEqual(original_content, actual_content)
 
                 with self.assertRaises(subprocess.CalledProcessError):
                     sandbox.run_command(['touch', added_filename], check=True)
@@ -725,18 +763,22 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
                          "printf '{}' > {}".format(overwrite_content, added_filename)],
                         check=True)
 
-                self.assertEqual(original_content,
-                                 sandbox.run_command(['cat', added_filename], check=True).stdout)
+                actual_content = sandbox.run_command(
+                    ['cat', added_filename], check=True
+                ).stdout.read().decode()
+                self.assertEqual(original_content, actual_content)
 
                 root_touch_result = sandbox.run_command(
                     ['touch', added_filename], check=True, as_root=True)
-                self.assertEqual(0, root_touch_result.returncode)
+                self.assertEqual(0, root_touch_result.return_code)
 
                 sandbox.run_command(
                     ['bash', '-c', "printf '{}' > {}".format(overwrite_content, added_filename)],
                     as_root=True, check=True)
-                self.assertEqual(overwrite_content,
-                                 sandbox.run_command(['cat', added_filename]).stdout)
+                actual_content = sandbox.run_command(
+                    ['cat', added_filename]
+                ).stdout.read().decode()
+                self.assertEqual(overwrite_content, actual_content)
 
     def test_overwrite_non_read_only_file(self):
         original_content = "some stuff"
@@ -750,12 +792,17 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
             with AutograderSandbox() as sandbox:
                 sandbox.add_files(f.name)
 
-                self.assertEqual(original_content,
-                                 sandbox.run_command(['cat', added_filename], check=True).stdout)
+                actual_content = sandbox.run_command(
+                    ['cat', added_filename], check=True
+                ).stdout.read().decode()
+                self.assertEqual(original_content, actual_content)
+
                 sandbox.run_command(
                     ['bash', '-c', "printf '{}' > {}".format(overwrite_content, added_filename)])
-                self.assertEqual(overwrite_content,
-                                 sandbox.run_command(['cat', added_filename], check=True).stdout)
+                actual_content = sandbox.run_command(
+                    ['cat', added_filename], check=True
+                ).stdout.read().decode()
+                self.assertEqual(overwrite_content, actual_content)
 
     def test_error_add_files_invalid_owner(self):
         with AutograderSandbox() as sandbox:

@@ -4,11 +4,12 @@ import subprocess
 import tarfile
 import tempfile
 import uuid
+from io import FileIO
 from typing import List
 
 import redis
 
-VERSION = '2.1.0'
+VERSION = '3.0.0'
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
@@ -188,10 +189,10 @@ class AutograderSandbox:
 
     @property
     def environment_variables(self) -> dict:
-        '''
+        """
         A dictionary of environment variables to be set inside the
         sandbox (Read only).
-        '''
+        """
         if not self._environment_variables:
             return {}
 
@@ -203,21 +204,11 @@ class AutograderSandbox:
                     max_stack_size: int=None,
                     max_virtual_memory: int=None,
                     as_root: bool=False,
-                    input: str='',
+                    stdin: FileIO=None,
                     timeout: int=None,
-                    check: bool=False,
-                    encoding: str='utf-8',
-                    errors: str='backslashreplace') -> subprocess.CompletedProcess:
+                    check: bool=False) -> 'CompletedCommand':
         """
-        Runs a command inside the sandbox and returns a
-        subprocess.CompletedProcess object.
-
-        *Note*: The stdout and
-        stderr fields of this object are modified so as to always be
-        strings.
-
-        *New in 2.0.0*: This function raises subprocess.TimeoutExpired
-        if timeout is exceeded.
+        Runs a command inside the sandbox and returns the results.
 
         :param args: A list of strings that specify which command should
             be run inside the sandbox.
@@ -233,23 +224,15 @@ class AutograderSandbox:
 
         :param as_root: Whether to run the command as a root user.
 
-        :param input: A string to be passed as input to the command's
-            stdin.
+        :param stdin: A file object to be redirected as input to the
+            command's stdin.
+
         :param timeout: The time limit for the command.
+
         :param check: Causes CalledProcessError to be raised if the
-            command exits nonzero.
-
-        :param encoding: The encoding to use for stdin, stdout, and
-            stderr. See https://docs.python.org/3/library/codecs.html
-            for valid values for this parameter.
-        :param errors: The error handling policy for the specified
-            encoding. See https://docs.python.org/3/library/codecs.html
-            for valid values for this parameter.
+            command exits nonzero or times out.
         """
-        cmd = ['docker', 'exec', '-i']
-        cmd.append(self.name)
-
-        cmd.append('cmd_runner.py')
+        cmd = ['docker', 'exec', '-i', self.name, 'cmd_runner.py']
 
         if max_num_processes is not None:
             cmd += ['--max_num_processes', str(max_num_processes)]
@@ -263,12 +246,6 @@ class AutograderSandbox:
         if timeout is not None:
             cmd += ['--timeout', str(timeout)]
 
-        if encoding is not None:
-            cmd += ['--encoding', encoding]
-
-        if errors is not None:
-            cmd += ['--encoding_error_policy', errors]
-
         if not as_root:
             cmd += ['--linux_user_id', str(self._linux_uid)]
 
@@ -277,31 +254,39 @@ class AutograderSandbox:
         if self.debug:
             print('running: {}'.format(cmd), flush=True)
 
-        try:
-            result = subprocess.run(cmd,
-                                    input=input.encode(encoding, errors=errors),
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE,
-                                    check=True)
-            results_json = json.loads(result.stdout.decode())
-            result.stdout = results_json['stdout']
-            result.stderr = results_json['stderr']
-            result.returncode = results_json['return_code']
+        with tempfile.TemporaryFile() as f:
+            try:
+                subprocess.run(cmd, stdin=stdin, stdout=f, stderr=subprocess.PIPE, check=True)
+                f.seek(0)
+                json_len = int(f.readline().decode().rstrip())
+                results_json = json.loads(f.read(json_len).decode())
 
-            if results_json['timed_out']:
-                raise subprocess.TimeoutExpired(
-                    cmd, timeout, output=result.stdout, stderr=result.stderr)
+                stdout_len = int(f.readline().decode().rstrip())
+                stdout = tempfile.NamedTemporaryFile()
+                stdout.write(f.read(stdout_len))
+                stdout.seek(0)
 
-            if result.returncode != 0 and check:
-                raise subprocess.CalledProcessError(
-                    result.returncode, cmd,
-                    output=result.stdout, stderr=result.stderr)
+                stderr_len = int(f.readline().decode().rstrip())
+                stderr = tempfile.NamedTemporaryFile()
+                stderr.write(f.read(stderr_len))
+                stderr.seek(0)
 
-            return result
-        except subprocess.CalledProcessError as e:
-            print(e.stdout)
-            print(e.stderr)
-            raise
+                result = CompletedCommand(return_code=results_json['return_code'],
+                                          timed_out=results_json['timed_out'],
+                                          stdout=stdout,
+                                          stderr=stderr)
+
+                if (result.return_code != 0 or results_json['timed_out']) and check:
+                    raise subprocess.CalledProcessError(
+                        result.return_code, cmd,
+                        output=result.stdout, stderr=result.stderr)
+
+                return result
+            except subprocess.CalledProcessError as e:
+                f.seek(0)
+                print(f.read())
+                print(e.stderr)
+                raise
 
     def add_files(self, *filenames: str, owner: str=SANDBOX_USERNAME, read_only: bool=False):
         """
@@ -355,6 +340,23 @@ class AutograderSandbox:
             'chown', '{}:{}'.format(SANDBOX_USERNAME, SANDBOX_USERNAME)]
         chown_cmd += filenames
         self.run_command(chown_cmd, as_root=True)
+
+
+class CompletedCommand:
+    def __init__(self, return_code: int, stdout: FileIO, stderr: FileIO, timed_out: bool):
+        """
+        :param return_code: The return code of the command,
+            or None if the command timed out.
+        :param stdout: A BinaryIO object containing the
+            stdout content of the command.
+        :param stderr: A BinaryIO object containing the
+            stderr content of the command.
+        :param timed_out: Whether the command exceeded the time limit.
+        """
+        self.return_code = return_code
+        self.stdout = stdout
+        self.stderr = stderr
+        self.timed_out = timed_out
 
 
 _REDIS_SETTINGS = {
