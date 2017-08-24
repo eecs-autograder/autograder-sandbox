@@ -39,6 +39,13 @@ Versioning scheme:
 - 0.x.0 releases contain new features.
 - x.0.0 releases may contain backwards-incompatible changes.
 
+3.1.0 - Output truncating
+- Issues fixed:
+    - [#13](https://github.com/eecs280staff/autograder-sandbox/issues/13)
+    - [#14](https://github.com/eecs280staff/autograder-sandbox/issues/14)
+- Changes to `run_command` function:
+    - Added optional `truncate_stdout` and `truncate_stderr` parameters that specify the maximum length of stdout and stderr to return in the command result.
+
 3.0.0 - Better handling of large IO 
 - Issues fixed: 
     - [#12](https://github.com/eecs280staff/autograder-sandbox/issues/12)

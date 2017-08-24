@@ -46,33 +46,49 @@ def main():
             raise
 
     # Adopted from https://github.com/python/cpython/blob/3.5/Lib/subprocess.py#L378
-    stdout = None
-    stderr = None
+    stdout = b''
+    stderr = b''
     timed_out = False
     return_code = None
-    with subprocess.Popen(args.cmd_args,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE,
-                          preexec_fn=set_subprocess_rlimits,
-                          start_new_session=True) as process:
-        try:
-            stdout, stderr = process.communicate(None, timeout=args.timeout)
-            return_code = process.poll()
-        except subprocess.TimeoutExpired:
-            # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            stdout, stderr = process.communicate()
-            timed_out = True
-        except:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            process.wait()
-            raise
+    try:
+        with subprocess.Popen(args.cmd_args,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE,
+                              preexec_fn=set_subprocess_rlimits,
+                              start_new_session=True) as process:
+            try:
+                stdout, stderr = process.communicate(None, timeout=args.timeout)
+                return_code = process.poll()
+            except subprocess.TimeoutExpired:
+                # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                stdout, stderr = process.communicate()
+                timed_out = True
+            except:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                process.wait()
+                raise
+    except FileNotFoundError:
+        # This is the value returned by /bin/sh when an executable could
+        # not be found.
+        return_code = 127
 
     results = {
         'cmd_args': args.cmd_args,
         'return_code': return_code,
         'timed_out': timed_out,
+        'stdout_truncated': False,
+        'stderr_truncated': False
     }
+
+    if args.truncate_stdout is not None and len(stdout) > args.truncate_stdout:
+        stdout = stdout[:args.truncate_stdout]
+        results['stdout_truncated'] = True
+
+    if args.truncate_stderr is not None and len(stderr) > args.truncate_stderr:
+        stderr = stderr[:args.truncate_stderr]
+        results['stderr_truncated'] = True
+
     json_data = json.dumps(results)
     print(len(json_data), flush=True)
     print(json_data, end='', flush=True)
@@ -92,6 +108,8 @@ def parse_args():
     parser.add_argument("--max_num_processes", nargs='?', type=int)
     parser.add_argument("--max_stack_size", nargs='?', type=int)
     parser.add_argument("--max_virtual_memory", nargs='?', type=int)
+    parser.add_argument("--truncate_stdout", nargs='?', type=int)
+    parser.add_argument("--truncate_stderr", nargs='?', type=int)
     parser.add_argument("--linux_user_id", nargs='?', type=int)
     parser.add_argument("cmd_args", nargs=argparse.REMAINDER)
 

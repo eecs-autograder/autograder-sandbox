@@ -9,7 +9,7 @@ from typing import List
 
 import redis
 
-VERSION = '3.0.0'
+VERSION = '3.1.0'
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
@@ -206,7 +206,9 @@ class AutograderSandbox:
                     as_root: bool=False,
                     stdin: FileIO=None,
                     timeout: int=None,
-                    check: bool=False) -> 'CompletedCommand':
+                    check: bool=False,
+                    truncate_stdout: int=None,
+                    truncate_stderr: int=None) -> 'CompletedCommand':
         """
         Runs a command inside the sandbox and returns the results.
 
@@ -231,6 +233,12 @@ class AutograderSandbox:
 
         :param check: Causes CalledProcessError to be raised if the
             command exits nonzero or times out.
+
+        :param truncate_stdout: When not None, stdout from the command
+            will be truncated after this many bytes.
+
+        :param truncate_stderr: When not None, stderr from the command
+            will be truncated after this many bytes.
         """
         cmd = ['docker', 'exec', '-i', self.name, 'cmd_runner.py']
 
@@ -245,6 +253,12 @@ class AutograderSandbox:
 
         if timeout is not None:
             cmd += ['--timeout', str(timeout)]
+
+        if truncate_stdout is not None:
+            cmd += ['--truncate_stdout', str(truncate_stdout)]
+
+        if truncate_stderr is not None:
+            cmd += ['--truncate_stderr', str(truncate_stderr)]
 
         if not as_root:
             cmd += ['--linux_user_id', str(self._linux_uid)]
@@ -274,7 +288,9 @@ class AutograderSandbox:
                 result = CompletedCommand(return_code=results_json['return_code'],
                                           timed_out=results_json['timed_out'],
                                           stdout=stdout,
-                                          stderr=stderr)
+                                          stderr=stderr,
+                                          stdout_truncated=results_json['stdout_truncated'],
+                                          stderr_truncated=results_json['stderr_truncated'])
 
                 if (result.return_code != 0 or results_json['timed_out']) and check:
                     raise subprocess.CalledProcessError(
@@ -343,7 +359,8 @@ class AutograderSandbox:
 
 
 class CompletedCommand:
-    def __init__(self, return_code: int, stdout: FileIO, stderr: FileIO, timed_out: bool):
+    def __init__(self, return_code: int, stdout: FileIO, stderr: FileIO, timed_out: bool,
+                 stdout_truncated: bool, stderr_truncated: bool):
         """
         :param return_code: The return code of the command,
             or None if the command timed out.
@@ -352,11 +369,15 @@ class CompletedCommand:
         :param stderr: A file object containing the
             stderr content of the command.
         :param timed_out: Whether the command exceeded the time limit.
+        :param stdout_truncated: Whether stdout was truncated.
+        :param stderr_truncated: Whether stderr was truncated.
         """
         self.return_code = return_code
         self.stdout = stdout
         self.stderr = stderr
         self.timed_out = timed_out
+        self.stdout_truncated = stdout_truncated
+        self.stderr_truncated = stderr_truncated
 
 
 _REDIS_SETTINGS = {

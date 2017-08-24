@@ -55,6 +55,52 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
         self.assertEqual(self.environment_variables, sandbox.environment_variables)
 
 
+class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
+
+    def setUp(self):
+        self.sandbox = AutograderSandbox()
+
+        self.root_cmd = ["touch", "/"]
+
+    def test_run_legal_command_non_root(self):
+        stdout_content = "hello world"
+        expected_output = stdout_content.encode() + b'\n'
+        with self.sandbox:
+            cmd_result = self.sandbox.run_command(["echo", stdout_content])
+            self.assertEqual(0, cmd_result.return_code)
+            self.assertEqual(expected_output, cmd_result.stdout.read())
+
+    def test_run_illegal_command_non_root(self):
+        with self.sandbox:
+            cmd_result = self.sandbox.run_command(self.root_cmd)
+            self.assertNotEqual(0, cmd_result.return_code)
+            self.assertNotEqual("", cmd_result.stderr)
+
+    def test_run_command_as_root(self):
+        with self.sandbox:
+            cmd_result = self.sandbox.run_command(self.root_cmd, as_root=True)
+            self.assertEqual(0, cmd_result.return_code)
+            self.assertEqual(b"", cmd_result.stderr.read())
+
+    def test_run_command_raise_on_error(self):
+        """
+        Tests that an exception is thrown only when check is True
+        and the command exits with nonzero status.
+        """
+        with self.sandbox:
+            # No exception should be raised.
+            cmd_result = self.sandbox.run_command(self.root_cmd, as_root=True, check=True)
+            self.assertEqual(0, cmd_result.return_code)
+
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.sandbox.run_command(self.root_cmd, check=True)
+
+    def test_run_command_executable_does_not_exist_no_error(self):
+        with self.sandbox:
+            cmd_result = self.sandbox.run_command(['not_an_exe'])
+            self.assertNotEqual(0, cmd_result.return_code)
+
+
 class AutograderSandboxMiscTestCase(unittest.TestCase):
 
     def setUp(self):
@@ -75,7 +121,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         file_obj.write(content)
         file_obj.seek(0)
 
-    def test_very_large_io(self):
+    def test_very_large_io_no_truncate(self):
         repeat_str = b'a' * 1000
         num_repeats = 1000000  # 1 GB
         for i in range(num_repeats):
@@ -84,6 +130,8 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.stdin.seek(0)
             start = time.time()
             result = sandbox.run_command(['cat'], stdin=self.stdin)
+            self.assertFalse(result.stdout_truncated)
+            self.assertFalse(result.stderr_truncated)
             print('Ran command that read and printed {} bytes to stdout in {}'.format(
                     num_repeats * len(repeat_str), time.time() - start))
             stdout_size = os.path.getsize(result.stdout.name)
@@ -99,6 +147,30 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             stderr_size = os.path.getsize(result.stderr.name)
             print(stderr_size)
             self.assertEqual(len(repeat_str) * num_repeats, stderr_size)
+
+    def test_truncate_stdout(self):
+        truncate_length = 10
+        long_output = b'a' * 100
+        expected_output = long_output[:truncate_length]
+        self._write_and_seek(self.stdin, long_output)
+        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+            result = sandbox.run_command(
+                ['cat'], stdin=self.stdin, truncate_stdout=truncate_length)
+            self.assertEqual(expected_output, result.stdout.read())
+            self.assertTrue(result.stdout_truncated)
+            self.assertFalse(result.stderr_truncated)
+
+    def test_truncate_stderr(self):
+        truncate_length = 10
+        long_output = b'a' * 100
+        expected_output = long_output[:truncate_length]
+        self._write_and_seek(self.stdin, long_output)
+        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+            result = sandbox.run_command(
+                ['bash', '-c', '>&2 cat'], stdin=self.stdin, truncate_stderr=truncate_length)
+            self.assertEqual(expected_output, result.stderr.read())
+            self.assertTrue(result.stderr_truncated)
+            self.assertFalse(result.stdout_truncated)
 
     def test_run_command_with_input(self):
         expected_stdout = b'spam egg sausage spam'
@@ -302,47 +374,6 @@ print('hello', flush=True)
 subprocess.call(['sleep', '{}'])
 print('goodbye', flush=True)
 """.format(_SLEEP_TIME)
-
-
-class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
-
-    def setUp(self):
-        self.sandbox = AutograderSandbox()
-
-        self.root_cmd = ["touch", "/"]
-
-    def test_run_legal_command_non_root(self):
-        stdout_content = "hello world"
-        expected_output = stdout_content.encode() + b'\n'
-        with self.sandbox:
-            cmd_result = self.sandbox.run_command(["echo", stdout_content])
-            self.assertEqual(0, cmd_result.return_code)
-            self.assertEqual(expected_output, cmd_result.stdout.read())
-
-    def test_run_illegal_command_non_root(self):
-        with self.sandbox:
-            cmd_result = self.sandbox.run_command(self.root_cmd)
-            self.assertNotEqual(0, cmd_result.return_code)
-            self.assertNotEqual("", cmd_result.stderr)
-
-    def test_run_command_as_root(self):
-        with self.sandbox:
-            cmd_result = self.sandbox.run_command(self.root_cmd, as_root=True)
-            self.assertEqual(0, cmd_result.return_code)
-            self.assertEqual(b"", cmd_result.stderr.read())
-
-    def test_run_command_raise_on_error(self):
-        """
-        Tests that an exception is thrown only when check is True
-        and the command exits with nonzero status.
-        """
-        with self.sandbox:
-            # No exception should be raised.
-            cmd_result = self.sandbox.run_command(self.root_cmd, as_root=True, check=True)
-            self.assertEqual(0, cmd_result.return_code)
-
-            with self.assertRaises(subprocess.CalledProcessError):
-                self.sandbox.run_command(self.root_cmd, check=True)
 
 
 class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
