@@ -77,7 +77,18 @@ def main():
         'cmd_args': args.cmd_args,
         'return_code': return_code,
         'timed_out': timed_out,
+        'stdout_truncated': False,
+        'stderr_truncated': False
     }
+
+    if args.truncate_stdout is not None and len(stdout) > args.truncate_stdout:
+        stdout = stdout[:args.truncate_stdout]
+        results['stdout_truncated'] = True
+
+    if args.truncate_stderr is not None and len(stderr) > args.truncate_stderr:
+        stderr = stderr[:args.truncate_stderr]
+        results['stderr_truncated'] = True
+
     json_data = json.dumps(results)
     print(len(json_data), flush=True)
     print(json_data, end='', flush=True)
@@ -97,6 +108,8 @@ def parse_args():
     parser.add_argument("--max_num_processes", nargs='?', type=int)
     parser.add_argument("--max_stack_size", nargs='?', type=int)
     parser.add_argument("--max_virtual_memory", nargs='?', type=int)
+    parser.add_argument("--truncate_stdout", nargs='?', type=int)
+    parser.add_argument("--truncate_stderr", nargs='?', type=int)
     parser.add_argument("--linux_user_id", nargs='?', type=int)
     parser.add_argument("cmd_args", nargs=argparse.REMAINDER)
 
