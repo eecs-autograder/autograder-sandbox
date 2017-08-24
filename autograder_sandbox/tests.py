@@ -344,6 +344,11 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.sandbox.run_command(self.root_cmd, check=True)
 
+    def test_run_command_executable_does_not_exist_no_error(self):
+        with self.sandbox:
+            cmd_result = self.sandbox.run_command(['not_an_exe'])
+            self.assertNotEqual(0, cmd_result.return_code)
+
 
 class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
 

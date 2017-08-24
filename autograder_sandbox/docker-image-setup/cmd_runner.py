@@ -46,27 +46,32 @@ def main():
             raise
 
     # Adopted from https://github.com/python/cpython/blob/3.5/Lib/subprocess.py#L378
-    stdout = None
-    stderr = None
+    stdout = b''
+    stderr = b''
     timed_out = False
     return_code = None
-    with subprocess.Popen(args.cmd_args,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE,
-                          preexec_fn=set_subprocess_rlimits,
-                          start_new_session=True) as process:
-        try:
-            stdout, stderr = process.communicate(None, timeout=args.timeout)
-            return_code = process.poll()
-        except subprocess.TimeoutExpired:
-            # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            stdout, stderr = process.communicate()
-            timed_out = True
-        except:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            process.wait()
-            raise
+    try:
+        with subprocess.Popen(args.cmd_args,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE,
+                              preexec_fn=set_subprocess_rlimits,
+                              start_new_session=True) as process:
+            try:
+                stdout, stderr = process.communicate(None, timeout=args.timeout)
+                return_code = process.poll()
+            except subprocess.TimeoutExpired:
+                # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                stdout, stderr = process.communicate()
+                timed_out = True
+            except:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                process.wait()
+                raise
+    except FileNotFoundError:
+        # This is the value returned by /bin/sh when an executable could
+        # not be found.
+        return_code = 127
 
     results = {
         'cmd_args': args.cmd_args,
