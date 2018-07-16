@@ -14,5 +14,5 @@ install:
 
 script:
     - pycodestyle autograder_sandbox
-    - pydocstyle augograder_sandbox
+    - pydocstyle autograder_sandbox
     - python3 -m unittest discover
