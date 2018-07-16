@@ -64,7 +64,7 @@ def main():
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                 stdout, stderr = process.communicate()
                 timed_out = True
-            except:
+            except:  # noqa
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                 process.wait()
                 raise

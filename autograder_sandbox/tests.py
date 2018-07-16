@@ -133,7 +133,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertFalse(result.stdout_truncated)
             self.assertFalse(result.stderr_truncated)
             print('Ran command that read and printed {} bytes to stdout in {}'.format(
-                    num_repeats * len(repeat_str), time.time() - start))
+                num_repeats * len(repeat_str), time.time() - start))
             stdout_size = os.path.getsize(result.stdout.name)
             print(stdout_size)
             self.assertEqual(len(repeat_str) * num_repeats, stdout_size)
@@ -610,8 +610,8 @@ int main()
 def _compile_in_sandbox(sandbox, *files_to_compile):
     exe_name = 'prog'
     sandbox.run_command(
-        ['g++', '--std=c++11'] + list(files_to_compile) +
-        ['-o', exe_name], check=True)
+        ['g++', '--std=c++11'] + list(files_to_compile)
+        + ['-o', exe_name], check=True)
     return exe_name
 
 
@@ -839,6 +839,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
         with AutograderSandbox() as sandbox:
             with self.assertRaises(ValueError):
                 sandbox.add_files('steve', owner='not_an_owner')
+
 
 if __name__ == '__main__':
     unittest.main()

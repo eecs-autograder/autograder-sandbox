@@ -1,0 +1,18 @@
+sudo: required
+
+services:
+    - docker
+    - redis-server
+
+language: python
+python:
+    - "3.5"
+
+install:
+    - pip install -r requirements.txt
+    - pip install -r requirements-dev.txt
+
+script:
+    - pycodestyle autograder_sandbox
+    - pydocstyle augograder_sandbox
+    - python3 -m unittest discover
