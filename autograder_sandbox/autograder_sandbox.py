@@ -155,25 +155,25 @@ class AutograderSandbox:
 
     @property
     def name(self) -> str:
-        '''
+        """
         The name used to identify this sandbox. (Read only)
-        '''
+        """
         return self._name
 
     @property
     def docker_image(self) -> str:
-        '''
+        """
         The name of the docker image to create the sandbox from.
-        '''
+        """
         return self._docker_image
 
     @property
     def allow_network_access(self) -> bool:
-        '''
+        """
         Whether network access is allowed by this sandbox.
         If an attempt to set this value is made while the sandbox is
         running, ValueError will be raised.
-        '''
+        """
         return self._allow_network_access
 
     @allow_network_access.setter
