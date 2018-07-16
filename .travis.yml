@@ -13,6 +13,4 @@ install:
     - pip install -r requirements-dev.txt
 
 script:
-    - pycodestyle autograder_sandbox
-    - pydocstyle autograder_sandbox
-    - python3 -m unittest discover
+    - pycodestyle autograder_sandbox && pydocstyle autograder_sandbox && python3 -m unittest discover
