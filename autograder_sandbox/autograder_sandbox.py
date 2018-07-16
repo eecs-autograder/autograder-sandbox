@@ -19,7 +19,7 @@ SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE',
 
 
 class AutograderSandbox:
-    '''
+    """
     This class wraps Docker functionality to provide an interface for
     running untrusted programs in a secure, isolated environment.
 
@@ -30,7 +30,7 @@ class AutograderSandbox:
     manager. The underlying docker container to be used is created and
     destroyed when the context manager is entered and exited,
     respectively.
-    '''
+    """
 
     def __init__(self, name: str=None,
                  docker_image: str=SANDBOX_DOCKER_IMAGE,
