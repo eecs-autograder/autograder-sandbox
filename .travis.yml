@@ -1,13 +1,17 @@
 sudo: required
 
-language: python3.5
-
 services:
-  - docker
-  - redis-server
+    - docker
+    - redis-server
+
+language: python
+python:
+    - "3.5"
+
+install:
+    - pip install -r requirements.txt
+    - pip install -r requirements-dev.txt
 
 script:
-    pip install -r requirements.txt
-    pip install -r requirements-dev.txt
-    pycodestyle autograder_sandbox
+    - pycodestyle autograder_sandbox
 
