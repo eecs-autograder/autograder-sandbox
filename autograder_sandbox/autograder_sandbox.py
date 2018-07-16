@@ -17,7 +17,6 @@ SANDBOX_USERNAME = 'autograder'
 SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE',
                                       'jameslp/autograder-sandbox:{}'.format(VERSION))
 
-
 class AutograderSandbox:
     """
     This class wraps Docker functionality to provide an interface for
