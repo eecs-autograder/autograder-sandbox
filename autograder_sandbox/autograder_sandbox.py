@@ -9,7 +9,7 @@ from typing import List
 
 import redis
 
-VERSION = '3.1.0'
+VERSION = '3.1.1'
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
@@ -227,6 +227,7 @@ class AutograderSandbox:
         :param as_root: Whether to run the command as a root user.
 
         :param stdin: A file object to be redirected as input to the
+            command's stdin. If this is None, /dev/null is sent to the
             command's stdin.
 
         :param timeout: The time limit for the command.
@@ -241,6 +242,9 @@ class AutograderSandbox:
             will be truncated after this many bytes.
         """
         cmd = ['docker', 'exec', '-i', self.name, 'cmd_runner.py']
+
+        if stdin is None:
+            cmd.append('--stdin_devnull')
 
         if max_num_processes is not None:
             cmd += ['--max_num_processes', str(max_num_processes)]

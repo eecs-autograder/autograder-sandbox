@@ -50,8 +50,10 @@ def main():
     stderr = b''
     timed_out = False
     return_code = None
+    stdin = subprocess.DEVNULL if args.stdin_devnull else None 
     try:
         with subprocess.Popen(args.cmd_args,
+                              stdin=stdin,
                               stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE,
                               preexec_fn=set_subprocess_rlimits,
@@ -111,6 +113,7 @@ def parse_args():
     parser.add_argument("--truncate_stdout", nargs='?', type=int)
     parser.add_argument("--truncate_stderr", nargs='?', type=int)
     parser.add_argument("--linux_user_id", nargs='?', type=int)
+    parser.add_argument("--stdin_devnull", action='store_true', default=False)
     parser.add_argument("cmd_args", nargs=argparse.REMAINDER)
 
     return parser.parse_args()
