@@ -179,6 +179,18 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             result = sandbox.run_command(['cat'], stdin=self.stdin)
             self.assertEqual(expected_stdout, result.stdout.read())
 
+    def test_command_tries_to_read_from_stdin_when_stdin_arg_is_none(self):
+        with AutograderSandbox() as sandbox:
+            result = sandbox.run_command(
+                ['python3', '-c', "import sys; sys.stdin.read(); print('done')"],
+                max_num_processes=10,
+                max_stack_size=10000000,
+                max_virtual_memory=500000000,
+                timeout=2,
+            )
+            self.assertFalse(result.timed_out)
+            self.assertEqual(0, result.return_code)
+
     def test_return_code_reported_and_stderr_recorded(self):
         with AutograderSandbox() as sandbox:
             result = sandbox.run_command(['ls', 'definitely not a file'])
