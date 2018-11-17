@@ -50,7 +50,7 @@ def main():
     stderr = b''
     timed_out = False
     return_code = None
-    stdin = subprocess.DEVNULL if args.stdin_devnull else None 
+    stdin = subprocess.DEVNULL if args.stdin_devnull else None
     try:
         with subprocess.Popen(args.cmd_args,
                               stdin=stdin,
