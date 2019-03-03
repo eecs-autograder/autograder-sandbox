@@ -39,6 +39,11 @@ Versioning scheme:
 - 0.x.0 releases contain new features.
 - x.0.0 releases may contain backwards-incompatible changes.
 
+3.1.2 - Stdin /dev/null and Ubuntu version lock
+- Issues fixed:
+    - [#20](https://github.com/eecs-autograder/autograder-sandbox/issues/20)
+- In autograder-sandbox/autograder_sandbox/docker-image-setup/Dockerfile, locked Ubuntu version to Xenial instead of using latest.
+
 3.1.0 - Output truncating
 - Issues fixed:
     - [#13](https://github.com/eecs280staff/autograder-sandbox/issues/13)
