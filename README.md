@@ -1,7 +1,7 @@
 # Autograder Sandbox
 
 This Python library uses Docker container functionality to create a secure, isolated environment for running untrusted code.
-Full API documentation can be found at http://autograder-sandbox.readthedocs.io/en/latest/
+Full API documentation can be found at http://autograder-sandbox.readthedocs.io
 
 ## Requirements
 - Python >= 3.5
