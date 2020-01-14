@@ -9,13 +9,20 @@ from typing import List
 
 import redis
 
-VERSION = '3.1.2'
+VERSION = '4.0.0'
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
 SANDBOX_USERNAME = 'autograder'
-SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE',
-                                      'jameslp/autograder-sandbox:{}'.format(VERSION))
+SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'jameslp/ag-ubuntu-16:1')
+
+
+class SandboxCommandError(Exception):
+    """
+    An exception to be raised when a call to AutograderSandbox.run_command
+    doesn't finish normally.
+    """
+    pass
 
 
 class AutograderSandbox:
@@ -134,6 +141,19 @@ class AutograderSandbox:
             subprocess.run(
                 ['docker', 'exec', '-i', self.name, 'usermod', '-u',
                  str(self._linux_uid), SANDBOX_USERNAME],
+                check=True)
+
+            cmd_runner_source = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                'docker-image-setup',
+                'cmd_runner.py'
+            )
+            cmd_runner_dest = '/usr/local/bin/cmd_runner.py'
+            subprocess.run(
+                ['docker', 'cp', cmd_runner_source, '{}:{}'.format(self.name, cmd_runner_dest)],
+                check=True)
+            subprocess.run(
+                ['docker', 'exec', '-i', self.name, 'chmod', '555', cmd_runner_dest],
                 check=True)
         except subprocess.CalledProcessError as e:
             if self.debug:
@@ -304,9 +324,12 @@ class AutograderSandbox:
                 return result
             except subprocess.CalledProcessError as e:
                 f.seek(0)
-                print(f.read())
-                print(e.stderr)
-                raise
+                raise SandboxCommandError(
+                    f.read().decode('utf-8', 'surrogateescape')
+                    + '\n'
+                    + e.stdout.read().decode('utf-8', 'surrogateescape')
+                    + e.stderr.read().decode('utf-8', 'surrogateescape')
+                ) from e
 
     def add_files(self, *filenames: str, owner: str=SANDBOX_USERNAME, read_only: bool=False):
         """

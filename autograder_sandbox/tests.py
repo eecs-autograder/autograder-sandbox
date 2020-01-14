@@ -12,7 +12,7 @@ import typing
 
 from collections import OrderedDict
 
-from autograder_sandbox import AutograderSandbox, VERSION
+from autograder_sandbox import AutograderSandbox, SandboxCommandError, VERSION
 
 
 def kb_to_bytes(num_kb):
@@ -39,7 +39,7 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
         self.assertIsNotNone(sandbox.name)
         self.assertFalse(sandbox.allow_network_access)
         self.assertEqual({}, sandbox.environment_variables)
-        self.assertEqual('jameslp/autograder-sandbox:{}'.format(VERSION), sandbox.docker_image)
+        self.assertEqual('jameslp/ag-ubuntu-16:1', sandbox.docker_image)
 
     def test_non_default_init(self):
         docker_image = 'waaaaluigi'
@@ -92,7 +92,7 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
             cmd_result = self.sandbox.run_command(self.root_cmd, as_root=True, check=True)
             self.assertEqual(0, cmd_result.return_code)
 
-            with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertRaises(SandboxCommandError):
                 self.sandbox.run_command(self.root_cmd, check=True)
 
     def test_run_command_executable_does_not_exist_no_error(self):
@@ -287,7 +287,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         with AutograderSandbox() as sandbox:  # type: AutograderSandbox
             # Make sure the file path above is correct
             sandbox.run_command(['cat', runner_path], check=True)
-            with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertRaises(SandboxCommandError):
                 sandbox.run_command(['touch', runner_path], check=True)
 
     @mock.patch('subprocess.run')
@@ -353,20 +353,20 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
         with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
-            with self.assertRaises(subprocess.CalledProcessError) as cm:
+            with self.assertRaises(SandboxCommandError) as cm:
                 sandbox.run_command(
                     ['bash', '-c', 'cat {}; exit 1'.format(self.file_to_print)],
                     check=True)
-            self.assertEqual(self.non_utf, cm.exception.stdout.read())
+            self.assertIn(self.non_utf.decode('utf-8', 'surrogateescape'), str(cm.exception))
 
         with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
-            with self.assertRaises(subprocess.CalledProcessError) as cm:
+            with self.assertRaises(SandboxCommandError) as cm:
                 sandbox.run_command(
                     ['bash', '-c', '>&2 cat {}; exit 1'.format(self.file_to_print)],
                     check=True)
-            self.assertEqual(self.non_utf, cm.exception.stderr.read())
+            self.assertIn(self.non_utf.decode('utf-8', 'surrogateescape'), str(cm.exception))
 
 
 _SLEEP_TIME = 6
@@ -797,10 +797,10 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
                 ).stdout.read().decode()
                 self.assertEqual(original_content, actual_content)
 
-                with self.assertRaises(subprocess.CalledProcessError):
+                with self.assertRaises(SandboxCommandError):
                     sandbox.run_command(['touch', added_filename], check=True)
 
-                with self.assertRaises(subprocess.CalledProcessError):
+                with self.assertRaises(SandboxCommandError):
                     sandbox.run_command(
                         ['bash', '-c',
                          "printf '{}' > {}".format(overwrite_content, added_filename)],
