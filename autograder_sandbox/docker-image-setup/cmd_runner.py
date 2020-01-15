@@ -8,7 +8,7 @@ import argparse
 import resource
 import json
 import tempfile
-
+import uuid
 import shutil
 
 
@@ -46,77 +46,120 @@ def main():
             raise
 
     # Adopted from https://github.com/python/cpython/blob/3.5/Lib/subprocess.py#L378
-    stdout = b''
-    stderr = b''
+    # stdout = b''
+    # stderr = b''
     timed_out = False
     return_code = None
     stdin = subprocess.DEVNULL if args.stdin_devnull else None
-    try:
-        with subprocess.Popen(args.cmd_args,
-                              stdin=stdin,
-                              stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE,
-                              preexec_fn=set_subprocess_rlimits,
-                              start_new_session=True) as process:
-            try:
-                stdout, stderr = process.communicate(None, timeout=args.timeout)
-                return_code = process.poll()
-            except subprocess.TimeoutExpired:
-                # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                stdout, stderr = process.communicate()
-                timed_out = True
-            except:  # noqa
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                process.wait()
-                raise
-    except FileNotFoundError:
-        # This is the value returned by /bin/sh when an executable could
-        # not be found.
-        return_code = 127
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        try:
+            with subprocess.Popen(args.cmd_args,
+                                  stdin=stdin,
+                                  stdout=stdout,
+                                  stderr=stderr,
+                                  preexec_fn=set_subprocess_rlimits,
+                                  start_new_session=True) as process:
+                try:
+                    return_code = process.wait(timeout=args.timeout)
+                    # return_code = process.poll()
+                except subprocess.TimeoutExpired:
+                    # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    process.wait()
+                    timed_out = True
+                except:  # noqa
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    process.wait()
+                    raise
 
-    results = {
-        'cmd_args': args.cmd_args,
-        'return_code': return_code,
-        'timed_out': timed_out,
-        'stdout_truncated': False,
-        'stderr_truncated': False
-    }
+        # if (args.truncate_stdout is not None
+        #         and os.path.getsize(stdout_filename) > args.truncate_stdout):
+        #     os.truncate(stdout_filename, args.truncate_stdout)
+        #     stdout_truncated = True
 
-    if args.truncate_stdout is not None and len(stdout) > args.truncate_stdout:
-        stdout = stdout[:args.truncate_stdout]
-        results['stdout_truncated'] = True
+        # if (args.truncate_stderr is not None
+        #         and os.path.getsize(stderr_filename) > args.truncate_stderr):
+        #     os.truncate(stderr_filename, args.truncate_stderr)
+        #     stderr_truncated = True
+        except FileNotFoundError:
+            # This is the value returned by /bin/sh when an executable could
+            # not be found.
+            return_code = 127
 
-    if args.truncate_stderr is not None and len(stderr) > args.truncate_stderr:
-        stderr = stderr[:args.truncate_stderr]
-        results['stderr_truncated'] = True
+        stdout_len = stdout.tell()
+        stdout_truncated = (
+            args.truncate_stdout is not None and stdout_len > args.truncate_stdout)
+        stderr_len = stderr.tell()
+        stderr_truncated = (
+            args.truncate_stderr is not None and stderr_len > args.truncate_stderr)
+        results = {
+            'cmd_args': args.cmd_args,
+            'return_code': return_code,
+            'timed_out': timed_out,
+            'stdout_truncated': stdout_truncated,
+            'stderr_truncated': stderr_truncated,
+        }
 
-    json_data = json.dumps(results)
-    print(len(json_data), flush=True)
-    print(json_data, end='', flush=True)
+        # if args.truncate_stdout is not None and len(stdout) > args.truncate_stdout:
+        #     stdout = stdout[:args.truncate_stdout]
+        #     results['stdout_truncated'] = True
 
-    print(len(stdout), flush=True)
-    sys.stdout.buffer.write(stdout)
-    sys.stdout.flush()
+        # if args.truncate_stderr is not None and len(stderr) > args.truncate_stderr:
+        #     stderr = stderr[:args.truncate_stderr]
+        #     results['stderr_truncated'] = True
 
-    print(len(stderr), flush=True)
-    sys.stdout.buffer.write(stderr)
-    sys.stdout.flush()
+        json_data = json.dumps(results)
+        print(len(json_data), flush=True)
+        print(json_data, end='', flush=True)
+
+        truncated_stdout_len = args.truncate_stdout if stdout_truncated else stdout_len
+        print(truncated_stdout_len, flush=True)
+        stdout.seek(0)
+        for chunk in _chunked_read(stdout, truncated_stdout_len):
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.flush()
+
+        truncated_stderr_len = args.truncate_stderr if stderr_truncated else stderr_len
+        print(stderr_len, flush=True)
+        stderr.seek(0)
+        for chunk in _chunked_read(stderr, truncated_stderr_len):
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.flush()
+
+        # print(len(stdout), flush=True)
+        # sys.stdout.buffer.write(stdout)
+        # sys.stdout.flush()
+
+        # print(len(stderr), flush=True)
+        # sys.stdout.buffer.write(stderr)
+        # sys.stdout.flush()
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--timeout", nargs='?', type=int)
-    parser.add_argument("--max_num_processes", nargs='?', type=int)
-    parser.add_argument("--max_stack_size", nargs='?', type=int)
-    parser.add_argument("--max_virtual_memory", nargs='?', type=int)
-    parser.add_argument("--truncate_stdout", nargs='?', type=int)
-    parser.add_argument("--truncate_stderr", nargs='?', type=int)
-    parser.add_argument("--linux_user_id", nargs='?', type=int)
+    parser.add_argument("--timeout", type=int)
+    parser.add_argument("--max_num_processes", type=int)
+    parser.add_argument("--max_stack_size", type=int)
+    parser.add_argument("--max_virtual_memory", type=int)
+    parser.add_argument("--truncate_stdout", type=int)
+    parser.add_argument("--truncate_stderr", type=int)
+    parser.add_argument("--linux_user_id", type=int)
     parser.add_argument("--stdin_devnull", action='store_true', default=False)
     parser.add_argument("cmd_args", nargs=argparse.REMAINDER)
 
     return parser.parse_args()
+
+
+# Generator that reads amount_to_read bytes from file_obj, yielding
+# one chunk at a time.
+def _chunked_read(file_obj, amount_to_read, chunk_size=1024*16):
+    num_reads = amount_to_read // chunk_size
+    for i in range(num_reads):
+        yield file_obj.read(chunk_size)
+
+    remainder = amount_to_read % chunk_size
+    if remainder:
+        yield file_obj.read(remainder)
 
 
 if __name__ == '__main__':
