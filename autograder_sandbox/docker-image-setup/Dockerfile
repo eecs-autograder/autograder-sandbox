@@ -15,7 +15,4 @@ RUN useradd autograder && \
    mkdir -p /home/autograder/working_dir && \
    chown -R autograder:autograder /home/autograder
 
-COPY cmd_runner.py /usr/local/bin/cmd_runner.py
-RUN chmod 555 /usr/local/bin/cmd_runner.py
-
 WORKDIR /home/autograder/working_dir
