@@ -152,7 +152,7 @@ def parse_args():
 
 # Generator that reads amount_to_read bytes from file_obj, yielding
 # one chunk at a time.
-def _chunked_read(file_obj, amount_to_read, chunk_size=1024*16):
+def _chunked_read(file_obj, amount_to_read, chunk_size=1024 * 16):
     num_reads = amount_to_read // chunk_size
     for i in range(num_reads):
         yield file_obj.read(chunk_size)
