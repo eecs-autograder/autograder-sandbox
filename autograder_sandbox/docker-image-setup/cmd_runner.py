@@ -4,6 +4,7 @@ import os
 import sys
 import subprocess
 import signal
+import pwd
 import argparse
 import resource
 import json
@@ -18,6 +19,7 @@ def main():
     def set_subprocess_rlimits():
         try:
             if args.linux_user_id is not None:
+                os.setgid(args.linux_user_id)
                 os.setuid(args.linux_user_id)
 
             if args.max_num_processes is not None:
@@ -50,13 +52,21 @@ def main():
     stdin = subprocess.DEVNULL if args.stdin_devnull else None
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         # Adopted from https://github.com/python/cpython/blob/3.5/Lib/subprocess.py#L378
+        env_copy = os.environ.copy()
+        if args.linux_user_id is not None:
+            # KEEP UP TO DATE WITH SANDBOX_USERNAME IN autograder_sandbox.py
+            record = pwd.getpwnam('autograder')
+            env_copy['HOME'] = record.pw_dir
+            env_copy['USER'] = record.pw_name
+            env_copy['LOGNAME'] = record.pw_name
         try:
             with subprocess.Popen(args.cmd_args,
                                   stdin=stdin,
                                   stdout=stdout,
                                   stderr=stderr,
                                   preexec_fn=set_subprocess_rlimits,
-                                  start_new_session=True) as process:
+                                  start_new_session=True,
+                                  env=env_copy) as process:
                 try:
                     return_code = process.wait(timeout=args.timeout)
                 except subprocess.TimeoutExpired:
