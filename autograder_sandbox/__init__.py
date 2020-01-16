@@ -4,5 +4,6 @@ from .autograder_sandbox import (
     SandboxCommandError,
     VERSION,
     SANDBOX_USERNAME,
+    SANDBOX_HOME_DIR_NAME,
     SANDBOX_DOCKER_IMAGE
 )

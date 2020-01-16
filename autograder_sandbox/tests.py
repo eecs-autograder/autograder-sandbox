@@ -12,7 +12,13 @@ import typing
 
 from collections import OrderedDict
 
-from autograder_sandbox import AutograderSandbox, SandboxCommandError, VERSION
+from autograder_sandbox import (
+    AutograderSandbox,
+    SandboxCommandError,
+    VERSION,
+    SANDBOX_USERNAME,
+    SANDBOX_HOME_DIR_NAME
+)
 
 from .output_size_performance_test import output_size_performance_test
 
@@ -209,6 +215,17 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
                 str(val) for val in self.environment_variables.values())
             expected_output += '\n'
             self.assertEqual(expected_output, result.stdout.read().decode())
+
+    def test_home_env_var_set_in_preexec(self) -> None:
+        with AutograderSandbox() as sandbox:
+            result = sandbox.run_command(['bash', '-c', 'printf $HOME'])
+            self.assertEqual(SANDBOX_HOME_DIR_NAME, result.stdout.read().decode())
+
+            result = sandbox.run_command(['bash', '-c', 'printf $USER'])
+            self.assertEqual(SANDBOX_USERNAME, result.stdout.read().decode())
+
+            result = sandbox.run_command(['bash', '-c', 'printf $HOME'], as_root=True)
+            self.assertEqual('/root', result.stdout.read().decode())
 
     def test_reset(self):
         with AutograderSandbox() as sandbox:
