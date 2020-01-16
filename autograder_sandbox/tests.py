@@ -14,6 +14,8 @@ from collections import OrderedDict
 
 from autograder_sandbox import AutograderSandbox, SandboxCommandError, VERSION
 
+from .output_size_performance_test import output_size_performance_test
+
 
 def kb_to_bytes(num_kb):
     return 1000 * num_kb
@@ -122,34 +124,13 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         file_obj.seek(0)
 
     def test_very_large_io_no_truncate(self):
-        repeat_str = b'a' * 1000
-        num_repeats = 1000000  # 1 GB
-        for i in range(num_repeats):
-            self.stdin.write(repeat_str)
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
-            self.stdin.seek(0)
-            start = time.time()
-            result = sandbox.run_command(['cat'], stdin=self.stdin)
-            self.assertFalse(result.stdout_truncated)
-            self.assertFalse(result.stderr_truncated)
-            print('Ran command that read and printed {} bytes to stdout in {}'.format(
-                num_repeats * len(repeat_str), time.time() - start))
-            stdout_size = os.path.getsize(result.stdout.name)
-            print(stdout_size)
-            self.assertEqual(len(repeat_str) * num_repeats, stdout_size)
+        output_size_performance_test(10 ** 9)
 
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
-            self.stdin.seek(0)
-            start = time.time()
-            result = sandbox.run_command(['bash', '-c', '>&2 cat'], stdin=self.stdin)
-            print('Ran command that read and printed {} bytes to stderr in {}'.format(
-                num_repeats * len(repeat_str), time.time() - start))
-            stderr_size = os.path.getsize(result.stderr.name)
-            print(stderr_size)
-            self.assertEqual(len(repeat_str) * num_repeats, stderr_size)
+    def test_truncate_very_large_io(self) -> None:
+        output_size_performance_test(10 ** 9, truncate=10**7)
 
     def test_truncate_stdout(self):
-        truncate_length = 10
+        truncate_length = 9
         long_output = b'a' * 100
         expected_output = long_output[:truncate_length]
         self._write_and_seek(self.stdin, long_output)
@@ -161,7 +142,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertFalse(result.stderr_truncated)
 
     def test_truncate_stderr(self):
-        truncate_length = 10
+        truncate_length = 13
         long_output = b'a' * 100
         expected_output = long_output[:truncate_length]
         self._write_and_seek(self.stdin, long_output)
@@ -257,7 +238,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
 
     def test_entire_process_tree_killed_on_timeout(self):
-        for program_str in _PROG_THAT_FORKS, _PROG_WITH_SUBPROCESS_STALL:
+        for program_str in _PROG_WITH_SUBPROCESS_STALL, _PROG_WITH_PARENT_PROC_STALL:
             with AutograderSandbox() as sandbox:
                 ps_result = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
                 print(ps_result)
@@ -275,12 +256,28 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
                 self.assertLess(time_elapsed, _SLEEP_TIME // 2,
                                 msg='Killing processes took too long')
 
-                ps_result_after_restart = sandbox.run_command(
+                ps_result_after_cmd = sandbox.run_command(
                     ['ps', '-aux']).stdout.read().decode()
-                print(ps_result_after_restart)
-                num_ps_lines_after_restart = len(
-                    ps_result_after_restart.split('\n'))
-                self.assertEqual(num_ps_lines, num_ps_lines_after_restart)
+                print(ps_result_after_cmd)
+                num_ps_lines_after_cmd = len(ps_result_after_cmd.split('\n'))
+                self.assertEqual(num_ps_lines, num_ps_lines_after_cmd)
+
+    def test_command_can_leave_child_process_running(self) -> None:
+        with AutograderSandbox() as sandbox:
+            ps_result = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
+            print(ps_result)
+            num_ps_lines = len(ps_result.split('\n'))
+            print(num_ps_lines)
+
+            script_file = _add_string_to_sandbox_as_file(_PROG_THAT_FORKS, '.py', sandbox)
+
+            result = sandbox.run_command(['python3', script_file], timeout=1)
+            self.assertFalse(result.timed_out)
+
+            ps_result_after_cmd = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
+            print(ps_result_after_cmd)
+            num_ps_lines_after_cmd = len(ps_result_after_cmd.split('\n'))
+            self.assertEqual(num_ps_lines + 1, num_ps_lines_after_cmd)
 
     def test_try_to_change_cmd_runner(self):
         runner_path = '/usr/local/bin/cmd_runner.py'
@@ -386,6 +383,16 @@ print('hello', flush=True)
 subprocess.call(['sleep', '{}'])
 print('goodbye', flush=True)
 """.format(_SLEEP_TIME)
+
+_PROG_WITH_PARENT_PROC_STALL = """
+import subprocess
+import time
+
+print('hello', flush=True)
+subprocess.Popen(['sleep', '{}'])
+time.sleep({})
+print('goodbye', flush=True)
+""".format(_SLEEP_TIME * 2, _SLEEP_TIME)
 
 
 class AutograderSandboxResourceLimitTestCase(unittest.TestCase):

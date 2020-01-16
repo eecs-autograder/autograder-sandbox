@@ -296,17 +296,20 @@ class AutograderSandbox:
             try:
                 subprocess.run(cmd, stdin=stdin, stdout=f, stderr=subprocess.PIPE, check=True)
                 f.seek(0)
+
                 json_len = int(f.readline().decode().rstrip())
                 results_json = json.loads(f.read(json_len).decode())
 
                 stdout_len = int(f.readline().decode().rstrip())
                 stdout = tempfile.NamedTemporaryFile()
-                stdout.write(f.read(stdout_len))
+                for chunk in _chunked_read(f, stdout_len):
+                    stdout.write(chunk)
                 stdout.seek(0)
 
                 stderr_len = int(f.readline().decode().rstrip())
                 stderr = tempfile.NamedTemporaryFile()
-                stderr.write(f.read(stderr_len))
+                for chunk in _chunked_read(f, stderr_len):
+                    stderr.write(chunk)
                 stderr.seek(0)
 
                 result = CompletedCommand(return_code=results_json['return_code'],
@@ -324,11 +327,11 @@ class AutograderSandbox:
                 return result
             except subprocess.CalledProcessError as e:
                 f.seek(0)
+                stderr = e.stderr if isinstance(e.stderr, bytes) else e.stderr.read()
                 raise SandboxCommandError(
                     f.read().decode('utf-8', 'surrogateescape')
                     + '\n'
-                    + e.stdout.read().decode('utf-8', 'surrogateescape')
-                    + e.stderr.read().decode('utf-8', 'surrogateescape')
+                    + stderr.decode('utf-8', 'surrogateescape')
                 ) from e
 
     def add_files(self, *filenames: str, owner: str=SANDBOX_USERNAME, read_only: bool=False):
@@ -383,6 +386,18 @@ class AutograderSandbox:
             'chown', '{}:{}'.format(SANDBOX_USERNAME, SANDBOX_USERNAME)]
         chown_cmd += filenames
         self.run_command(chown_cmd, as_root=True)
+
+
+# Generator that reads amount_to_read bytes from file_obj, yielding
+# one chunk at a time.
+def _chunked_read(file_obj, amount_to_read, chunk_size=1024 * 16):
+    num_reads = amount_to_read // chunk_size
+    for i in range(num_reads):
+        yield file_obj.read(chunk_size)
+
+    remainder = amount_to_read % chunk_size
+    if remainder:
+        yield file_obj.read(remainder)
 
 
 class CompletedCommand:
