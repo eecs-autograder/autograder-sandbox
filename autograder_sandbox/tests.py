@@ -14,6 +14,8 @@ from collections import OrderedDict
 
 from autograder_sandbox import AutograderSandbox, SandboxCommandError, VERSION
 
+from .output_size_performance_test import output_size_performance_test
+
 
 def kb_to_bytes(num_kb):
     return 1000 * num_kb
@@ -122,60 +124,10 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         file_obj.seek(0)
 
     def test_very_large_io_no_truncate(self):
-        repeat_str = b'a' * 1000
-        num_repeats = 1000000  # 1 GB
-        for i in range(num_repeats):
-            self.stdin.write(repeat_str)
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
-            self.stdin.seek(0)
-            start = time.time()
-            result = sandbox.run_command(['cat'], stdin=self.stdin)
-            self.assertFalse(result.stdout_truncated)
-            self.assertFalse(result.stderr_truncated)
-            print('Ran command that read and printed {} bytes to stdout in {}'.format(
-                num_repeats * len(repeat_str), time.time() - start))
-            stdout_size = os.path.getsize(result.stdout.name)
-            print(stdout_size)
-            self.assertEqual(len(repeat_str) * num_repeats, stdout_size)
-
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
-            self.stdin.seek(0)
-            start = time.time()
-            result = sandbox.run_command(['bash', '-c', '>&2 cat'], stdin=self.stdin)
-            print('Ran command that read and printed {} bytes to stderr in {}'.format(
-                num_repeats * len(repeat_str), time.time() - start))
-            stderr_size = os.path.getsize(result.stderr.name)
-            print(stderr_size)
-            self.assertEqual(len(repeat_str) * num_repeats, stderr_size)
+        output_size_performance_test(10 ** 9)
 
     def test_truncate_very_large_io(self) -> None:
-        repeat_str = b'a' * 1000
-        num_repeats = 1000000  # 1 GB
-        truncate_len = 10 ** 7  # 10MB
-        for i in range(num_repeats):
-            self.stdin.write(repeat_str)
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
-            self.stdin.seek(0)
-            start = time.time()
-            result = sandbox.run_command(['cat'], stdin=self.stdin, truncate_stdout=truncate_len)
-            self.assertTrue(result.stdout_truncated)
-            self.assertFalse(result.stderr_truncated)
-            print('Ran command that read and printed {} bytes to stdout in {}'.format(
-                num_repeats * len(repeat_str), time.time() - start))
-            stdout_size = os.path.getsize(result.stdout.name)
-            print(stdout_size)
-            self.assertEqual(truncate_len, stdout_size)
-
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
-            self.stdin.seek(0)
-            start = time.time()
-            result = sandbox.run_command(
-                ['bash', '-c', '>&2 cat'], stdin=self.stdin, truncate_stderr=truncate_len)
-            print('Ran command that read and printed {} bytes to stderr in {}'.format(
-                num_repeats * len(repeat_str), time.time() - start))
-            stderr_size = os.path.getsize(result.stderr.name)
-            print(stderr_size)
-            self.assertEqual(truncate_len, stderr_size)
+        output_size_performance_test(10 ** 9, truncate=10**7)
 
     def test_truncate_stdout(self):
         truncate_length = 9
