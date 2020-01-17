@@ -598,16 +598,22 @@ def _run_stack_usage_prog(mem_to_use, mem_limit, sandbox):
 
 _STACK_USAGE_PROG_TMPL = """#include <iostream>
 #include <thread>
+#include <cstring>
 
 using namespace std;
 
-int main()
-{{
+int main() {{
     char stacky[{num_bytes_on_stack}];
+    for (int i = 0; i < {num_bytes_on_stack} - 1; ++i) {{
+        stacky[i] = 'a';
+    }}
+    stacky[{num_bytes_on_stack} - 1] = '\\0';
 
+    cout << "Sleeping" << endl;
     this_thread::sleep_for(chrono::seconds(2));
 
-    cout << stacky << endl;
+    cout << "Allocated " << strlen(stacky) + 1 << " bytes" << endl;
+
     return 0;
 }}
 """
@@ -615,7 +621,7 @@ int main()
 
 def _run_heap_usage_prog(mem_to_use, mem_limit, sandbox):
     def _run_prog(sandbox):
-        prog = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=mem_to_use)
+        prog = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=mem_to_use, sleep_time=2)
         filename = _add_string_to_sandbox_as_file(prog, '.cpp', sandbox)
         exe_name = _compile_in_sandbox(sandbox, filename)
         result = result = sandbox.run_command(
@@ -628,16 +634,24 @@ def _run_heap_usage_prog(mem_to_use, mem_limit, sandbox):
 
 _HEAP_USAGE_PROG_TMPL = """#include <iostream>
 #include <thread>
+#include <cstring>
 
 using namespace std;
 
-int main()
-{{
-    char* heapy = new char[{num_bytes_on_heap}];
+const size_t num_bytes_on_heap = {num_bytes_on_heap};
 
-    this_thread::sleep_for(chrono::seconds(2));
+int main() {{
+    cout << "Allocating an array of " << num_bytes_on_heap << " bytes" << endl;
+    char* heapy = new char[num_bytes_on_heap];
+    for (size_t i = 0; i < num_bytes_on_heap - 1; ++i) {{
+        heapy[i] = 'a';
+    }}
+    heapy[num_bytes_on_heap - 1] = '\\0';
 
-    cout << heapy << endl;
+    cout << "Sleeping" << endl;
+    this_thread::sleep_for(chrono::seconds({sleep_time}));
+
+    cout << "Allocated and filled " << strlen(heapy) + 1 << " bytes" << endl;
     return 0;
 }}
 """
@@ -646,7 +660,7 @@ int main()
 def _compile_in_sandbox(sandbox, *files_to_compile):
     exe_name = 'prog'
     sandbox.run_command(
-        ['g++', '--std=c++11'] + list(files_to_compile)
+        ['g++', '--std=c++11', '-Wall', '-Werror'] + list(files_to_compile)
         + ['-o', exe_name], check=True)
     return exe_name
 
@@ -655,7 +669,9 @@ def _run_process_spawning_prog(num_processes_to_spawn, process_limit,
                                sandbox):
     def _run_prog(sandbox):
         prog = _PROCESS_SPAWN_PROG_TMPL.format(
-            num_processes=num_processes_to_spawn)
+            num_processes=num_processes_to_spawn,
+            sleep_time=2
+        )
         filename = _add_string_to_sandbox_as_file(prog, '.py', sandbox)
 
         result = sandbox.run_command(['python3', filename],
@@ -672,10 +688,10 @@ import subprocess
 
 processes = []
 for i in range({num_processes}):
-    proc = subprocess.Popen(['sleep', '2'])
+    proc = subprocess.Popen(['sleep', '{sleep_time}'])
     processes.append(proc)
 
-time.sleep(2)
+time.sleep({sleep_time})
 
 for proc in processes:
     proc.communicate()
@@ -699,6 +715,72 @@ def _call_function_and_allocate_sandbox_if_needed(func, sandbox):
     else:
         return func(sandbox)
 
+# -----------------------------------------------------------------------------
+
+
+class ContainerLevelResourceLimitTestCase(unittest.TestCase):
+    def test_pid_limit(self) -> None:
+        with AutograderSandbox() as sandbox:
+            filename = _add_string_to_sandbox_as_file(
+                _PROCESS_SPAWN_PROG_TMPL.format(num_processes=1000, sleep_time=5), '.py', sandbox
+            )
+
+            result = sandbox.run_command(['python3', filename])
+            stdout = result.stdout.read().decode()
+            print(stdout)
+            stderr = result.stderr.read().decode()
+            print(stderr)
+            self.assertNotEqual(0, result.return_code)
+            self.assertIn('BlockingIOError', stderr)
+            self.assertIn('Resource temporarily unavailable', stderr)
+
+    def test_processes_created_and_finish_then_more_processes_spawned(self) -> None:
+        spawn_twice_prog = """
+import time
+import subprocess
+
+
+for i in range(2):
+    processes = []
+    print('spawing processes')
+    for i in range({num_processes}):
+        proc = subprocess.Popen(['sleep', '{sleep_time}'])
+        processes.append(proc)
+
+    time.sleep({sleep_time})
+
+    print('waiting for processes to finish')
+    for proc in processes:
+        proc.communicate()
+"""
+        with AutograderSandbox() as sandbox:
+            filename = _add_string_to_sandbox_as_file(
+                spawn_twice_prog.format(num_processes=350, sleep_time=5), '.py', sandbox
+            )
+
+            result = sandbox.run_command(['python3', filename])
+            print(result.stdout.read().decode())
+            print(result.stderr.read().decode())
+            self.assertEqual(0, result.return_code)
+
+    def test_time_Limit(self) -> None:
+        # Figure out how to simulate the user bypassing cmd_runner's
+        # time limit
+        self.fail()
+
+    # Since we disable the OOM killer for the container, we expect
+    # commands to time out while waiting for memory to be made available.
+    def test_memory_limit_no_oom_kill(self) -> None:
+        program_str = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=4 * 10 ** 9, sleep_time=0)
+        with AutograderSandbox(memory_limit=2 * 10 ** 9) as sandbox:
+            filename = _add_string_to_sandbox_as_file(program_str, '.cpp', sandbox)
+            exe_name = _compile_in_sandbox(sandbox, filename)
+            result = sandbox.run_command(['./' + exe_name], timeout=20)
+
+            print(result.return_code)
+            print(result.stdout.read().decode())
+            print(result.stderr.read().decode())
+            self.assertTrue(result.timed_out)
 
 # -----------------------------------------------------------------------------
 

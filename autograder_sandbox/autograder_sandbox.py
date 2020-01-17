@@ -5,7 +5,7 @@ import tarfile
 import tempfile
 import uuid
 from io import FileIO
-from typing import List
+from typing import List, Union
 
 import redis
 
@@ -15,6 +15,9 @@ SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
 SANDBOX_USERNAME = 'autograder'
 SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'jameslp/ag-ubuntu-16:1')
+
+SANDBOX_PIDS_LIMIT = os.environ.get('SANDBOX_PIDS_LIMIT', 512)
+SANDBOX_MEM_LIMIT = os.environ.get('SANDBOX_MEM_LIMIT', 8 * 10 ** 9)
 
 
 class SandboxCommandError(Exception):
@@ -44,6 +47,8 @@ class AutograderSandbox:
                  allow_network_access: bool=False,
                  environment_variables: dict=None,
                  container_create_timeout: int=None,
+                 pids_limit: int=SANDBOX_PIDS_LIMIT,
+                 memory_limit: Union[int, str]=SANDBOX_MEM_LIMIT,
                  debug=False) -> None:
         """
         :param name: A human-readable name that can be used to identify
@@ -72,6 +77,34 @@ class AutograderSandbox:
             If the time limit is exceeded, subprocess.CalledProcessError
             will be raised. A value of None indicates no time limit.
 
+        :param pids_limit: Passed to "docker create" with the
+            --pids-limit flag. This will limit the number of processes
+            that can be created.
+            See https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v1/pids.html
+            for more information on limiting pids with cgroups.
+
+            We recommend leaving this value set to the default of 512
+            and using the max_num_processes argument to run_command
+            if you want to impose a strict limit on a particular command.
+
+        :param memory_limit: Passed to "docker create" with the --memory,
+            --memory-swap, and --oom-kill-disable arguments. This will
+            limit the amount of memory that processes running in the
+            sandbox can use.
+
+            We choose to disable the OOM killer to prevent the sandbox's
+            main process from being killed by the OOM killer (which would
+            cause the whole container to exit). This means, however, that
+            a command that hits the memory limit may time out.
+
+            In general we recommend setting this value as high as is safe
+            for your host machine and additionally using the max_virtual_memory
+            argument to run_command to set a tighter limit on the command's
+            address space size.
+
+            See https://docs.docker.com/config/containers/resource_constraints/#limit-a-containers-access-to-memory
+            for more information.
+
         :param debug: Whether to print additional debugging information.
         """
         if name is None:
@@ -85,6 +118,8 @@ class AutograderSandbox:
         self._environment_variables = environment_variables
         self._is_running = False
         self._container_create_timeout = container_create_timeout
+        self._pids_limit = pids_limit
+        self._memory_limit = memory_limit
         self.debug = debug
 
     def __enter__(self):
@@ -121,6 +156,11 @@ class AutograderSandbox:
             '-i',  # Run in interactive mode (for input redirection)
             '-t',  # Allocate psuedo tty
             '-d',  # Detached
+
+            '--pids-limit', str(self._pids_limit),
+            '--memory', str(self._memory_limit),
+            '--memory-swap', str(self._memory_limit),
+            '--oom-kill-disable',
         ]
 
         if not self.allow_network_access:
