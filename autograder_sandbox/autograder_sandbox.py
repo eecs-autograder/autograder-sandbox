@@ -18,8 +18,9 @@ SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'jameslp/ag-ubuntu
 
 SANDBOX_PIDS_LIMIT = os.environ.get('SANDBOX_PIDS_LIMIT', 512)
 SANDBOX_MEM_LIMIT = os.environ.get('SANDBOX_MEM_LIMIT', 8 * 10 ** 9)
-
 SANDBOX_MIN_FALLBACK_TIMEOUT = os.environ.get('SANDBOX_MIN_FALLBACK_TIMEOUT', 60)
+
+CMD_RUNNER_PATH = '/usr/local/bin/cmd_runner.py'
 
 
 class SandboxCommandError(Exception):
@@ -193,10 +194,15 @@ class AutograderSandbox:
                     '-e', "{}={}".format(key, value)
                 ]
 
+        # Override any CMD or ENTRYPOINT directives used in custom images.
+        # This restriction is in place to avoid situations where a custom
+        # entrypoint exits prematurely, therefore stopping the container.
+        # https://docs.docker.com/engine/reference/run/#overriding-dockerfile-image-defaults
+        create_args += ['--entrypoint', '']
         create_args.append(self.docker_image)  # Image to use
+        create_args.append('/bin/bash')
 
-        subprocess.check_call(create_args,
-                              timeout=self._container_create_timeout)
+        subprocess.check_call(create_args, timeout=self._container_create_timeout)
         try:
             subprocess.run(
                 ['docker', 'exec', '-i', self.name, 'usermod', '-u',
@@ -208,12 +214,11 @@ class AutograderSandbox:
                 'docker-image-setup',
                 'cmd_runner.py'
             )
-            cmd_runner_dest = '/usr/local/bin/cmd_runner.py'
             subprocess.run(
-                ['docker', 'cp', cmd_runner_source, '{}:{}'.format(self.name, cmd_runner_dest)],
+                ['docker', 'cp', cmd_runner_source, '{}:{}'.format(self.name, CMD_RUNNER_PATH)],
                 check=True)
             subprocess.run(
-                ['docker', 'exec', '-i', self.name, 'chmod', '555', cmd_runner_dest],
+                ['docker', 'exec', '-i', self.name, 'chmod', '555', CMD_RUNNER_PATH],
                 check=True)
         except subprocess.CalledProcessError as e:
             if self.debug:
@@ -321,7 +326,7 @@ class AutograderSandbox:
         :param truncate_stderr: When not None, stderr from the command
             will be truncated after this many bytes.
         """
-        cmd = ['docker', 'exec', '-i', self.name, 'cmd_runner.py']
+        cmd = ['docker', 'exec', '-i', self.name, CMD_RUNNER_PATH]
 
         if stdin is None:
             cmd.append('--stdin_devnull')

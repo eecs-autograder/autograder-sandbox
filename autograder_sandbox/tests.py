@@ -17,7 +17,8 @@ from autograder_sandbox import (
     SandboxCommandError,
     VERSION,
     SANDBOX_USERNAME,
-    SANDBOX_HOME_DIR_NAME
+    SANDBOX_HOME_DIR_NAME,
+    SANDBOX_DOCKER_IMAGE,
 )
 
 from .output_size_performance_test import output_size_performance_test
@@ -994,6 +995,57 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
         with AutograderSandbox() as sandbox:
             with self.assertRaises(ValueError):
                 sandbox.add_files('steve', owner='not_an_owner')
+
+
+class OverrideCmdAndEntrypointTestCase(unittest.TestCase):
+    def test_override_image_cmd(self) -> None:
+        dockerfile = """FROM jameslp/autograder-sandbox:3.1.2
+CMD ["echo", "goodbye"]
+"""
+        tag = 'sandbox_test_image_with_cmd'
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with open(os.path.join(temp_dir, 'Dockerfile'), 'w') as f:
+                f.write(dockerfile)
+            subprocess.run('docker build -t {} {}'.format(tag, temp_dir), check=True, shell=True)
+
+        with AutograderSandbox(docker_image=tag) as sandbox:
+            time.sleep(2)
+            result = sandbox.run_command(['echo', 'hello'])
+            self.assertEqual(0, result.return_code)
+            self.assertEqual('hello\n', result.stdout.read().decode())
+
+    def test_override_image_entrypoint(self) -> None:
+        dockerfile = """FROM jameslp/autograder-sandbox:3.1.2
+ENTRYPOINT ["echo", "goodbye"]
+"""
+        tag = 'sandbox_test_image_with_entrypoint'
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with open(os.path.join(temp_dir, 'Dockerfile'), 'w') as f:
+                f.write(dockerfile)
+            subprocess.run('docker build -t {} {}'.format(tag, temp_dir), check=True, shell=True)
+
+        with AutograderSandbox(docker_image=tag) as sandbox:
+            time.sleep(2)
+            result = sandbox.run_command(['echo', 'hello'])
+            self.assertEqual(0, result.return_code)
+            self.assertEqual('hello\n', result.stdout.read().decode())
+
+    def test_override_image_cmd_and_entrypoint(self) -> None:
+        dockerfile = """FROM jameslp/autograder-sandbox:3.1.2
+ENTRYPOINT ["echo", "goodbye"]
+CMD ["echo", "goodbye"]
+"""
+        tag = 'sandbox_test_image_with_cmd_and_entrypoint'
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with open(os.path.join(temp_dir, 'Dockerfile'), 'w') as f:
+                f.write(dockerfile)
+            subprocess.run('docker build -t {} {}'.format(tag, temp_dir), check=True, shell=True)
+
+        with AutograderSandbox(docker_image=tag) as sandbox:
+            time.sleep(2)
+            result = sandbox.run_command(['echo', 'hello'])
+            self.assertEqual(0, result.return_code)
+            self.assertEqual('hello\n', result.stdout.read().decode())
 
 
 if __name__ == '__main__':
