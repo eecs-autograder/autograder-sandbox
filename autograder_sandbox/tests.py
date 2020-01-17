@@ -766,9 +766,7 @@ for i in range(2):
 
     def test_fallback_time_limit_is_twice_timeout(self) -> None:
         with AutograderSandbox(min_fallback_timeout=4) as sandbox:
-            mock_stderr = b'some stderr'
             to_throw = subprocess.TimeoutExpired([], 10)
-            to_throw.stderr = mock_stderr
             subprocess_run_mock = mock.Mock(side_effect=to_throw)
             with mock.patch('subprocess.run', new=subprocess_run_mock):
                 result = sandbox.run_command(['sleep', '20'], timeout=5)
@@ -783,13 +781,10 @@ for i in range(2):
                 self.assertTrue(result.timed_out)
                 self.assertIsNone(result.return_code)
                 self.assertIn('fallback timeout', stderr)
-                self.assertIn(mock_stderr.decode(), stderr)
 
     def test_fallback_time_limit_is_min_fallback_timeout(self) -> None:
         with AutograderSandbox(min_fallback_timeout=60) as sandbox:
-            mock_stderr = b'some stderr'
             to_throw = subprocess.TimeoutExpired([], 60)
-            to_throw.stderr = mock_stderr
             subprocess_run_mock = mock.Mock(side_effect=to_throw)
             with mock.patch('subprocess.run', new=subprocess_run_mock):
                 result = sandbox.run_command(['sleep', '20'], timeout=10)
@@ -802,7 +797,6 @@ for i in range(2):
                 self.assertTrue(result.timed_out)
                 self.assertIsNone(result.return_code)
                 self.assertIn('fallback timeout', stderr)
-                self.assertIn(mock_stderr.decode(), stderr)
 
     # Since we disable the OOM killer for the container, we expect
     # commands to time out while waiting for memory to be paged

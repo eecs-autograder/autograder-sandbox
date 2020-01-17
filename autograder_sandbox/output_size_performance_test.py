@@ -39,7 +39,7 @@ def output_size_performance_test(output_size, *, stderr=True, truncate=None):
         with AutograderSandbox() as sandbox:
             start = time.time()
             result = sandbox.run_command(
-                ['python3', '-c',  _PRINT_PROG.format(output_size, stream='stderr')],
+                ['python3', '-c', _PRINT_PROG.format(output_size, stream='stderr')],
                 truncate_stdout=truncate, truncate_stderr=truncate, check=True)
             print('Ran command that printed {} bytes to stderr in {}'.format(
                 output_size, time.time() - start))
