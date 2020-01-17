@@ -8,7 +8,7 @@ from autograder_sandbox import AutograderSandbox, SandboxCommandError, VERSION
 
 def main():
     args = parse_args()
-    output_size_performance_test(args.output_size, args.stderr, args.truncate)
+    output_size_performance_test(args.output_size, stderr=args.stderr, truncate=args.truncate)
 
 
 def parse_args():
