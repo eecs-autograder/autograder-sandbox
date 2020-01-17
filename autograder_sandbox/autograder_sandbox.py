@@ -19,6 +19,8 @@ SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'jameslp/ag-ubuntu
 SANDBOX_PIDS_LIMIT = os.environ.get('SANDBOX_PIDS_LIMIT', 512)
 SANDBOX_MEM_LIMIT = os.environ.get('SANDBOX_MEM_LIMIT', 8 * 10 ** 9)
 
+SANDBOX_MIN_FALLBACK_TIMEOUT = os.environ.get('SANDBOX_MIN_FALLBACK_TIMEOUT', 60)
+
 
 class SandboxCommandError(Exception):
     """
@@ -49,6 +51,7 @@ class AutograderSandbox:
                  container_create_timeout: int=None,
                  pids_limit: int=SANDBOX_PIDS_LIMIT,
                  memory_limit: Union[int, str]=SANDBOX_MEM_LIMIT,
+                 min_fallback_timeout: int=SANDBOX_MIN_FALLBACK_TIMEOUT,
                  debug=False) -> None:
         """
         :param name: A human-readable name that can be used to identify
@@ -87,6 +90,9 @@ class AutograderSandbox:
             and using the max_num_processes argument to run_command
             if you want to impose a strict limit on a particular command.
 
+            The default value for this parameter can be changed by
+            setting the SANDBOX_PIDS_LIMIT environment variable.
+
         :param memory_limit: Passed to "docker create" with the --memory,
             --memory-swap, and --oom-kill-disable arguments. This will
             limit the amount of memory that processes running in the
@@ -102,8 +108,20 @@ class AutograderSandbox:
             argument to run_command to set a tighter limit on the command's
             address space size.
 
+            The default value for this parameter can be changed by
+            setting the SANDBOX_MEM_LIMIT environment variable.
+
             See https://docs.docker.com/config/containers/resource_constraints/#limit-a-containers-access-to-memory
             for more information.
+
+        :param min_fallback_timeout: The timeout argument to run_command
+            is primarily enforced by cmd_runner.py. When that argument is
+            not None, a timeout of either twice the timeout argument to
+            run_command or this value, whichever is larger, will be applied
+            to the subprocess call to cmd_runner.py itself.
+
+            The default value for this parameter can be changed by
+            setting the SANDBOX_MIN_FALLBACK_TIMEOUT environment variable.
 
         :param debug: Whether to print additional debugging information.
         """
@@ -120,6 +138,7 @@ class AutograderSandbox:
         self._container_create_timeout = container_create_timeout
         self._pids_limit = pids_limit
         self._memory_limit = memory_limit
+        self._min_fallback_timeout = min_fallback_timeout
         self.debug = debug
 
     def __enter__(self):
@@ -333,8 +352,11 @@ class AutograderSandbox:
             print('running: {}'.format(cmd), flush=True)
 
         with tempfile.TemporaryFile() as f:
+            fallback_timeout = (
+                max(timeout * 2, self._min_fallback_timeout) if timeout is not None else None)
             try:
-                subprocess.run(cmd, stdin=stdin, stdout=f, stderr=subprocess.PIPE, check=True)
+                subprocess.run(cmd, stdin=stdin, stdout=f, stderr=subprocess.PIPE,
+                               check=True, timeout=fallback_timeout)
                 f.seek(0)
 
                 json_len = int(f.readline().decode().rstrip())
@@ -365,6 +387,28 @@ class AutograderSandbox:
                         output=result.stdout, stderr=result.stderr)
 
                 return result
+            except subprocess.TimeoutExpired as e:
+                stdout_len = f.tell()
+                f.seek(0)
+                stdout = tempfile.NamedTemporaryFile()
+                for chunk in _chunked_read(f, stdout_len):
+                    stdout.write(chunk)
+                stdout.seek(0)
+
+                stderr = tempfile.NamedTemporaryFile()
+                stderr.write(b'The command exceeded the fallback timeout. '
+                             b'If this occurs frequently, contact your system administrator.\n')
+                stderr.write(e.stderr if isinstance(e.stderr, bytes) else e.stderr.read())
+                stderr.seek(0)
+
+                return CompletedCommand(
+                    return_code=None,
+                    timed_out=True,
+                    stdout=stdout,
+                    stderr=stderr,
+                    stdout_truncated=False,
+                    stderr_truncated=True,
+                )
             except subprocess.CalledProcessError as e:
                 f.seek(0)
                 stderr = e.stderr if isinstance(e.stderr, bytes) else e.stderr.read()

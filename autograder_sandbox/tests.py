@@ -307,7 +307,6 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
     @mock.patch('subprocess.run')
     @mock.patch('subprocess.check_call')
     def test_container_create_timeout(self, mock_check_call, *args):
-        print(mock)
         with AutograderSandbox(debug=True):
             args, kwargs = mock_check_call.call_args
             self.assertIsNone(kwargs['timeout'])
@@ -725,7 +724,8 @@ class ContainerLevelResourceLimitTestCase(unittest.TestCase):
                 _PROCESS_SPAWN_PROG_TMPL.format(num_processes=1000, sleep_time=5), '.py', sandbox
             )
 
-            result = sandbox.run_command(['python3', filename])
+            # The limit should apply to all users, root or otherwise
+            result = sandbox.run_command(['python3', filename], as_root=True)
             stdout = result.stdout.read().decode()
             print(stdout)
             stderr = result.stderr.read().decode()
@@ -763,19 +763,56 @@ for i in range(2):
             print(result.stderr.read().decode())
             self.assertEqual(0, result.return_code)
 
-    def test_time_Limit(self) -> None:
-        # Figure out how to simulate the user bypassing cmd_runner's
-        # time limit
-        self.fail()
+    def test_fallback_time_limit_is_twice_timeout(self) -> None:
+        with AutograderSandbox(min_fallback_timeout=4) as sandbox:
+            mock_stderr = b'some stderr'
+            to_throw = subprocess.TimeoutExpired([], 10)
+            to_throw.stderr = mock_stderr
+            subprocess_run_mock = mock.Mock(side_effect=to_throw)
+            with mock.patch('subprocess.run', new=subprocess_run_mock):
+                result = sandbox.run_command(['sleep', '20'], timeout=5)
+                stdout = result.stdout.read().decode()
+                stderr = result.stderr.read().decode()
+                print(stdout)
+                print(stderr)
+
+                args, kwargs = subprocess_run_mock.call_args
+                self.assertEqual(10, kwargs['timeout'])
+
+                self.assertTrue(result.timed_out)
+                self.assertIsNone(result.return_code)
+                self.assertIn('fallback timeout', stderr)
+                self.assertIn(mock_stderr.decode(), stderr)
+
+    def test_fallback_time_limit_is_min_fallback_timeout(self) -> None:
+        with AutograderSandbox(min_fallback_timeout=60) as sandbox:
+            mock_stderr = b'some stderr'
+            to_throw = subprocess.TimeoutExpired([], 60)
+            to_throw.stderr = mock_stderr
+            subprocess_run_mock = mock.Mock(side_effect=to_throw)
+            with mock.patch('subprocess.run', new=subprocess_run_mock):
+                result = sandbox.run_command(['sleep', '20'], timeout=10)
+                stdout = result.stdout.read().decode()
+                stderr = result.stderr.read().decode()
+
+                args, kwargs = subprocess_run_mock.call_args
+                self.assertEqual(60, kwargs['timeout'])
+
+                self.assertTrue(result.timed_out)
+                self.assertIsNone(result.return_code)
+                self.assertIn('fallback timeout', stderr)
+                self.assertIn(mock_stderr.decode(), stderr)
 
     # Since we disable the OOM killer for the container, we expect
-    # commands to time out while waiting for memory to be made available.
+    # commands to time out while waiting for memory to be paged
+    # in and out.
     def test_memory_limit_no_oom_kill(self) -> None:
         program_str = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=4 * 10 ** 9, sleep_time=0)
         with AutograderSandbox(memory_limit=2 * 10 ** 9) as sandbox:
             filename = _add_string_to_sandbox_as_file(program_str, '.cpp', sandbox)
             exe_name = _compile_in_sandbox(sandbox, filename)
-            result = sandbox.run_command(['./' + exe_name], timeout=20)
+            # The limit should apply to all users, root or otherwise
+            result = sandbox.run_command(['./' + exe_name], timeout=20, as_root=True)
 
             print(result.return_code)
             print(result.stdout.read().decode())
