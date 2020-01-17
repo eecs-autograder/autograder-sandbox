@@ -111,8 +111,8 @@ class AutograderSandbox:
             The default value for this parameter can be changed by
             setting the SANDBOX_MEM_LIMIT environment variable.
 
-            See https://docs.docker.com/config/containers/resource_constraints/\
-#limit-a-containers-access-to-memory
+            See https://docs.docker.com/config/containers/resource_constraints/
+                    #limit-a-containers-access-to-memory
             for more information.
 
         :param min_fallback_timeout: The timeout argument to run_command
