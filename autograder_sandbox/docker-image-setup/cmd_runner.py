@@ -68,7 +68,8 @@ def main():
                                   start_new_session=True,
                                   env=env_copy) as process:
                 try:
-                    return_code = process.wait(timeout=args.timeout)
+                    process.communicate(None, timeout=args.timeout)
+                    return_code = process.poll()
                 except subprocess.TimeoutExpired:
                     # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)

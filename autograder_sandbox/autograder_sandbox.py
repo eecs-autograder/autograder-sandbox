@@ -357,26 +357,26 @@ class AutograderSandbox:
         if self.debug:
             print('running: {}'.format(cmd), flush=True)
 
-        with tempfile.TemporaryFile() as f:
+        with tempfile.TemporaryFile() as runner_stdout, tempfile.TemporaryFile() as runner_stderr:
             fallback_timeout = (
                 max(timeout * 2, self._min_fallback_timeout) if timeout is not None else None)
             try:
-                subprocess.run(cmd, stdin=stdin, stdout=f, stderr=subprocess.PIPE,
+                subprocess.run(cmd, stdin=stdin, stdout=runner_stdout, stderr=runner_stderr,
                                check=True, timeout=fallback_timeout)
-                f.seek(0)
+                runner_stdout.seek(0)
 
-                json_len = int(f.readline().decode().rstrip())
-                results_json = json.loads(f.read(json_len).decode())
+                json_len = int(runner_stdout.readline().decode().rstrip())
+                results_json = json.loads(runner_stdout.read(json_len).decode())
 
-                stdout_len = int(f.readline().decode().rstrip())
+                stdout_len = int(runner_stdout.readline().decode().rstrip())
                 stdout = tempfile.NamedTemporaryFile()
-                for chunk in _chunked_read(f, stdout_len):
+                for chunk in _chunked_read(runner_stdout, stdout_len):
                     stdout.write(chunk)
                 stdout.seek(0)
 
-                stderr_len = int(f.readline().decode().rstrip())
+                stderr_len = int(runner_stdout.readline().decode().rstrip())
                 stderr = tempfile.NamedTemporaryFile()
-                for chunk in _chunked_read(f, stderr_len):
+                for chunk in _chunked_read(runner_stdout, stderr_len):
                     stderr.write(chunk)
                 stderr.seek(0)
 
@@ -394,17 +394,20 @@ class AutograderSandbox:
 
                 return result
             except subprocess.TimeoutExpired as e:
-                stdout_len = f.tell()
-                f.seek(0)
+                stdout_len = runner_stdout.tell()
+                runner_stdout.seek(0)
                 stdout = tempfile.NamedTemporaryFile()
-                for chunk in _chunked_read(f, stdout_len):
+                for chunk in _chunked_read(runner_stdout, stdout_len):
                     stdout.write(chunk)
                 stdout.seek(0)
 
+                stderr_len = runner_stderr.tell()
+                runner_stderr.seek(0)
                 stderr = tempfile.NamedTemporaryFile()
                 stderr.write(b'The command exceeded the fallback timeout. '
                              b'If this occurs frequently, contact your system administrator.\n')
-                stderr.write(e.stderr if isinstance(e.stderr, bytes) else e.stderr.read())
+                for chunk in _chunked_read(runner_stderr, stderr_len):
+                    stderr.write(chunk)
                 stderr.seek(0)
 
                 return CompletedCommand(
@@ -416,12 +419,12 @@ class AutograderSandbox:
                     stderr_truncated=True,
                 )
             except subprocess.CalledProcessError as e:
-                f.seek(0)
-                stderr = e.stderr if isinstance(e.stderr, bytes) else e.stderr.read()
+                runner_stdout.seek(0)
+                runner_stderr.seek(0)
                 raise SandboxCommandError(
-                    f.read().decode('utf-8', 'surrogateescape')
+                    runner_stdout.read().decode('utf-8', 'surrogateescape')
                     + '\n'
-                    + stderr.decode('utf-8', 'surrogateescape')
+                    + runner_stderr.read().decode('utf-8', 'surrogateescape')
                 ) from e
 
     def add_files(self, *filenames: str, owner: str=SANDBOX_USERNAME, read_only: bool=False):
