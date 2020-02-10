@@ -9,7 +9,6 @@ from typing import List, Union
 
 import redis
 
-VERSION = '4.0.0'
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')

@@ -1,15 +1,15 @@
 #! /usr/bin/env python3
 
 from setuptools import setup  # type: ignore
-import autograder_sandbox
 
 setup(name='autograder-sandbox',
-      version=autograder_sandbox.VERSION,
+      version='3.0.1rc2',
       description=('Python library for running untrusted '
                    'code in Docker containers'),
       author='James Perretta',
       author_email='jameslp@umich.edu',
       packages=["autograder_sandbox"],
+      include_package_data=True,
       url='https://github.com/eecs280staff/autograder-sandbox',
       license='GNU Lesser General Public License v3',
       install_requires=['redis>=2.10.5'],
