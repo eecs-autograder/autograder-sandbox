@@ -40,7 +40,7 @@ Versioning scheme:
 - x.0.0 releases may contain backwards-incompatible changes.
 
 4.0.1 - Container-level process limits
-- See https://github.com/eecs-autograder/autograder-sandbox/projects/2 for issues fixed
+- See https://github.com/eecs-autograder/autograder-sandbox/projects/2 for a full list of issues fixed.
 - Significant changes:
     - Added container-level memory and process limits using Docker's cgroup options.
     - cmd_runner.py no longer has to be baked into images.
