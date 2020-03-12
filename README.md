@@ -39,6 +39,12 @@ Versioning scheme:
 - 0.x.0 releases contain new features.
 - x.0.0 releases may contain backwards-incompatible changes.
 
+4.0.1 - Container-level process limits
+- See https://github.com/eecs-autograder/autograder-sandbox/projects/2 for issues fixed
+- Significant changes:
+    - Added container-level memory and process limits using Docker's cgroup options.
+    - cmd_runner.py no longer has to be baked into images.
+
 3.1.2 - Stdin /dev/null and Ubuntu version lock
 - Issues fixed:
     - [#20](https://github.com/eecs-autograder/autograder-sandbox/issues/20)
@@ -51,8 +57,8 @@ Versioning scheme:
 - Changes to `run_command` function:
     - Added optional `truncate_stdout` and `truncate_stderr` parameters that specify the maximum length of stdout and stderr to return in the command result.
 
-3.0.0 - Better handling of large IO 
-- Issues fixed: 
+3.0.0 - Better handling of large IO
+- Issues fixed:
     - [#12](https://github.com/eecs280staff/autograder-sandbox/issues/12)
 - Changes to `run_command` function:
     - `input` is now called `stdin` and takes in a file object.
