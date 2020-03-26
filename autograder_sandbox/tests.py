@@ -15,7 +15,6 @@ from collections import OrderedDict
 from autograder_sandbox import (
     AutograderSandbox,
     SandboxCommandError,
-    VERSION,
     SANDBOX_USERNAME,
     SANDBOX_HOME_DIR_NAME,
     SANDBOX_DOCKER_IMAGE,
