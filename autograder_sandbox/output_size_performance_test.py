@@ -3,7 +3,7 @@ import os
 import tempfile
 import time
 
-from autograder_sandbox import AutograderSandbox, SandboxCommandError, VERSION
+from autograder_sandbox import AutograderSandbox, SandboxCommandError
 
 
 def main():
