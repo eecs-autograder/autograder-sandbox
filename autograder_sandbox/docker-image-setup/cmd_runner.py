@@ -50,7 +50,11 @@ def main():
     timed_out = False
     return_code = None
     stdin = subprocess.DEVNULL if args.stdin_devnull else None
-    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+    # IMPORTANT: We want to use NamedTemporaryFile here rather than TemporaryFile
+    # so that we can determine output size with os.path.size(). In some cases,
+    # notably when valgrind produces a core dump, file.tell() produces a value
+    # that is too large, which then causes an error.
+    with tempfile.NamedTemporaryFile() as stdout, tempfile.NamedTemporaryFile() as stderr:
         # Adopted from https://github.com/python/cpython/blob/3.5/Lib/subprocess.py#L378
         env_copy = os.environ.copy()
         if args.linux_user_id is not None:
@@ -85,10 +89,10 @@ def main():
             # not be found.
             return_code = 127
 
-        stdout_len = stdout.tell()
+        stdout_len = os.path.getsize(stdout.name)
         stdout_truncated = (
             args.truncate_stdout is not None and stdout_len > args.truncate_stdout)
-        stderr_len = stderr.tell()
+        stderr_len = os.path.getsize(stderr.name)
         stderr_truncated = (
             args.truncate_stderr is not None and stderr_len > args.truncate_stderr)
         results = {

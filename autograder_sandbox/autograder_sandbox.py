@@ -160,11 +160,7 @@ class AutograderSandbox:
 
     def restart(self):
         """
-        Restarts the sandbox without destroying it. As a side effect,
-        this will kill any processes running inside the sandbox.
-
-        IMPORTANT: It is strongly recommended that you call this method
-        after a command run by run_command times out.
+        Restarts the sandbox without destroying it.
         """
         self._stop()
         subprocess.check_call(['docker', 'start', self.name])
