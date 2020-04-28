@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 
-from setuptools import setup  # type: ignore
+from setuptools import setup
 
 setup(name='autograder-sandbox',
       version='4.0.2',
@@ -10,7 +10,10 @@ setup(name='autograder-sandbox',
       author_email='jameslp@umich.edu',
       packages=["autograder_sandbox"],
       include_package_data=True,
+      package_data={
+          'autograder_sandbox': ['py.typed']
+      },
       url='https://github.com/eecs280staff/autograder-sandbox',
       license='GNU Lesser General Public License v3',
       install_requires=['redis>=2.10.5'],
-      classifiers=['Programming Language :: Python :: 3.5'])
+      classifiers=['Programming Language :: Python :: 3.6'])

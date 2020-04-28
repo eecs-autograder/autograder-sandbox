@@ -8,48 +8,48 @@ import multiprocessing
 import itertools
 import time
 import uuid
-import typing
+from typing import IO, Callable, TypeVar, Optional
 
 from collections import OrderedDict
 
-from autograder_sandbox import (
+from .autograder_sandbox import (
     AutograderSandbox,
     SandboxCommandError,
     SANDBOX_USERNAME,
     SANDBOX_HOME_DIR_NAME,
     SANDBOX_DOCKER_IMAGE,
+    CompletedCommand
 )
 
 from .output_size_performance_test import output_size_performance_test
 
 
-def kb_to_bytes(num_kb):
+def kb_to_bytes(num_kb: int) -> int:
     return 1000 * num_kb
 
 
-def mb_to_bytes(num_mb):
+def mb_to_bytes(num_mb: int) -> int:
     return 1000 * kb_to_bytes(num_mb)
 
 
-def gb_to_bytes(num_gb):
+def gb_to_bytes(num_gb: int) -> int:
     return 1000 * mb_to_bytes(num_gb)
 
 
 class AutograderSandboxInitTestCase(unittest.TestCase):
-
-    def setUp(self):
+    def setUp(self) -> None:
         self.name = 'awexome_container{}'.format(uuid.uuid4().hex)
         self.environment_variables = OrderedDict(
-            {'spam': 'egg', 'sausage': 42})
+            {'spam': 'egg', 'sausage': '42'})
 
-    def test_default_init(self):
+    def test_default_init(self) -> None:
         sandbox = AutograderSandbox()
         self.assertIsNotNone(sandbox.name)
         self.assertFalse(sandbox.allow_network_access)
         self.assertEqual({}, sandbox.environment_variables)
         self.assertEqual('jameslp/ag-ubuntu-16:1', sandbox.docker_image)
 
-    def test_non_default_init(self):
+    def test_non_default_init(self) -> None:
         docker_image = 'waaaaluigi'
         sandbox = AutograderSandbox(
             name=self.name,
@@ -65,12 +65,12 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
 
 class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.sandbox = AutograderSandbox()
 
         self.root_cmd = ["touch", "/"]
 
-    def test_run_legal_command_non_root(self):
+    def test_run_legal_command_non_root(self) -> None:
         stdout_content = "hello world"
         expected_output = stdout_content.encode() + b'\n'
         with self.sandbox:
@@ -78,19 +78,19 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
             self.assertEqual(0, cmd_result.return_code)
             self.assertEqual(expected_output, cmd_result.stdout.read())
 
-    def test_run_illegal_command_non_root(self):
+    def test_run_illegal_command_non_root(self) -> None:
         with self.sandbox:
             cmd_result = self.sandbox.run_command(self.root_cmd)
             self.assertNotEqual(0, cmd_result.return_code)
             self.assertNotEqual("", cmd_result.stderr)
 
-    def test_run_command_as_root(self):
+    def test_run_command_as_root(self) -> None:
         with self.sandbox:
             cmd_result = self.sandbox.run_command(self.root_cmd, as_root=True)
             self.assertEqual(0, cmd_result.return_code)
             self.assertEqual(b"", cmd_result.stderr.read())
 
-    def test_run_command_raise_on_error(self):
+    def test_run_command_raise_on_error(self) -> None:
         """
         Tests that an exception is thrown only when check is True
         and the command exits with nonzero status.
@@ -103,7 +103,7 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
             with self.assertRaises(SandboxCommandError):
                 self.sandbox.run_command(self.root_cmd, check=True)
 
-    def test_run_command_executable_does_not_exist_no_error(self):
+    def test_run_command_executable_does_not_exist_no_error(self) -> None:
         with self.sandbox:
             cmd_result = self.sandbox.run_command(['not_an_exe'])
             self.assertNotEqual(0, cmd_result.return_code)
@@ -111,62 +111,62 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
 
 class AutograderSandboxMiscTestCase(unittest.TestCase):
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.name = 'awexome_container{}'.format(uuid.uuid4().hex)
         self.environment_variables = OrderedDict(
-            {'spam': 'egg', 'sausage': 42})
+            {'spam': 'egg', 'sausage': '42'})
 
         self.stdin = tempfile.NamedTemporaryFile()
         self.stdout = tempfile.NamedTemporaryFile()
         self.stderr = tempfile.NamedTemporaryFile()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self.stdin.close()
         self.stdout.close()
         self.stderr.close()
 
-    def _write_and_seek(self, file_obj, content):
+    def _write_and_seek(self, file_obj: IO[bytes], content: bytes) -> None:
         file_obj.write(content)
         file_obj.seek(0)
 
-    def test_very_large_io_no_truncate(self):
+    def test_very_large_io_no_truncate(self) -> None:
         output_size_performance_test(10 ** 9)
 
     def test_truncate_very_large_io(self) -> None:
         output_size_performance_test(10 ** 9, truncate=10**7)
 
-    def test_truncate_stdout(self):
+    def test_truncate_stdout(self) -> None:
         truncate_length = 9
         long_output = b'a' * 100
         expected_output = long_output[:truncate_length]
         self._write_and_seek(self.stdin, long_output)
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(
                 ['cat'], stdin=self.stdin, truncate_stdout=truncate_length)
             self.assertEqual(expected_output, result.stdout.read())
             self.assertTrue(result.stdout_truncated)
             self.assertFalse(result.stderr_truncated)
 
-    def test_truncate_stderr(self):
+    def test_truncate_stderr(self) -> None:
         truncate_length = 13
         long_output = b'a' * 100
         expected_output = long_output[:truncate_length]
         self._write_and_seek(self.stdin, long_output)
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(
                 ['bash', '-c', '>&2 cat'], stdin=self.stdin, truncate_stderr=truncate_length)
             self.assertEqual(expected_output, result.stderr.read())
             self.assertTrue(result.stderr_truncated)
             self.assertFalse(result.stdout_truncated)
 
-    def test_run_command_with_input(self):
+    def test_run_command_with_input(self) -> None:
         expected_stdout = b'spam egg sausage spam'
         self._write_and_seek(self.stdin, expected_stdout)
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(['cat'], stdin=self.stdin)
             self.assertEqual(expected_stdout, result.stdout.read())
 
-    def test_command_tries_to_read_from_stdin_when_stdin_arg_is_none(self):
+    def test_command_tries_to_read_from_stdin_when_stdin_arg_is_none(self) -> None:
         with AutograderSandbox() as sandbox:
             result = sandbox.run_command(
                 ['python3', '-c', "import sys; sys.stdin.read(); print('done')"],
@@ -178,14 +178,14 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertFalse(result.timed_out)
             self.assertEqual(0, result.return_code)
 
-    def test_return_code_reported_and_stderr_recorded(self):
+    def test_return_code_reported_and_stderr_recorded(self) -> None:
         with AutograderSandbox() as sandbox:
             result = sandbox.run_command(['ls', 'definitely not a file'])
             self.assertNotEqual(0, result.return_code)
             self.assertNotEqual('', result.stderr)
 
-    def test_context_manager(self):
-        with AutograderSandbox(name=self.name) as sandbox:  # type: AutograderSandbox
+    def test_context_manager(self) -> None:
+        with AutograderSandbox(name=self.name) as sandbox:
             self.assertEqual(self.name, sandbox.name)
             # If the container was created successfully, we
             # should get an error if we try to create another
@@ -199,14 +199,13 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         with AutograderSandbox(name=self.name):
             pass
 
-    def test_sandbox_environment_variables_set(self):
+    def test_sandbox_environment_variables_set(self) -> None:
         print_env_var_script = "echo ${}".format(
             ' $'.join(self.environment_variables))
 
         sandbox = AutograderSandbox(
             environment_variables=self.environment_variables)
-        with sandbox, typing.cast(typing.TextIO,
-                                  tempfile.NamedTemporaryFile('w+')) as f:
+        with sandbox, tempfile.NamedTemporaryFile('w+') as f:
             f.write(print_env_var_script)
             f.seek(0)
             sandbox.add_files(f.name)
@@ -227,7 +226,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             result = sandbox.run_command(['bash', '-c', 'printf $HOME'], as_root=True)
             self.assertEqual('/root', result.stdout.read().decode())
 
-    def test_reset(self):
+    def test_reset(self) -> None:
         with AutograderSandbox() as sandbox:
             file_to_add = os.path.abspath(__file__)
             sandbox.add_files(file_to_add)
@@ -236,11 +235,9 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result.read().decode())
 
             sandbox.reset()
+            self.assertEqual('', sandbox.run_command(['ls']).stdout.read().decode())
 
-            ls_result = sandbox.run_command(['ls']).stdout.read().decode()
-            self.assertEqual('', ls_result)
-
-    def test_restart_added_files_preserved(self):
+    def test_restart_added_files_preserved(self) -> None:
         with AutograderSandbox() as sandbox:
             file_to_add = os.path.abspath(__file__)
             sandbox.add_files(file_to_add)
@@ -254,7 +251,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             ls_result = sandbox.run_command(['ls']).stdout.read().decode()
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
 
-    def test_entire_process_tree_killed_on_timeout(self):
+    def test_entire_process_tree_killed_on_timeout(self) -> None:
         for program_str in _PROG_WITH_SUBPROCESS_STALL, _PROG_WITH_PARENT_PROC_STALL:
             with AutograderSandbox() as sandbox:
                 ps_result = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
@@ -296,9 +293,9 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             num_ps_lines_after_cmd = len(ps_result_after_cmd.split('\n'))
             self.assertEqual(num_ps_lines + 1, num_ps_lines_after_cmd)
 
-    def test_try_to_change_cmd_runner(self):
+    def test_try_to_change_cmd_runner(self) -> None:
         runner_path = '/usr/local/bin/cmd_runner.py'
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+        with AutograderSandbox() as sandbox:
             # Make sure the file path above is correct
             sandbox.run_command(['cat', runner_path], check=True)
             with self.assertRaises(SandboxCommandError):
@@ -306,7 +303,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
 
     @mock.patch('subprocess.run')
     @mock.patch('subprocess.check_call')
-    def test_container_create_timeout(self, mock_check_call, *args):
+    def test_container_create_timeout(self, mock_check_call: mock.Mock, *args: object) -> None:
         with AutograderSandbox(debug=True):
             args, kwargs = mock_check_call.call_args
             self.assertIsNone(kwargs['timeout'])
@@ -318,7 +315,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
 
 
 class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.non_utf = b'\x80 and some other stuff just because\n'
         with self.assertRaises(UnicodeDecodeError):
             self.non_utf.decode()
@@ -326,11 +323,11 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
         with open(self.file_to_print, 'wb') as f:
             f.write(self.non_utf)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         os.remove(self.file_to_print)
 
-    def test_non_unicode_chars_in_normal_output(self):
-        with AutograderSandbox() as sandbox:  # type: AutograderSandbox
+    def test_non_unicode_chars_in_normal_output(self) -> None:
+        with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
             result = sandbox.run_command(['cat', self.file_to_print])
@@ -343,7 +340,7 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
             print(stderr)
             self.assertEqual(self.non_utf, stderr)
 
-    def test_non_unicode_chars_in_output_command_timed_out(self):
+    def test_non_unicode_chars_in_output_command_timed_out(self) -> None:
         with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
@@ -362,7 +359,7 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
             self.assertTrue(result.timed_out)
             self.assertEqual(self.non_utf, result.stderr.read())
 
-    def test_non_unicode_chars_in_output_on_process_error(self):
+    def test_non_unicode_chars_in_output_on_process_error(self) -> None:
         with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
@@ -413,66 +410,46 @@ print('goodbye', flush=True)
 
 class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.sandbox = AutograderSandbox()
 
         self.small_virtual_mem_limit = mb_to_bytes(100)
         self.large_virtual_mem_limit = gb_to_bytes(1)
 
-    def test_run_command_timeout_exceeded(self):
+    def test_run_command_timeout_exceeded(self) -> None:
         with self.sandbox:
             result = self.sandbox.run_command(["sleep", "10"], timeout=1)
             self.assertTrue(result.timed_out)
 
-    def test_command_exceeds_process_limit(self):
-        process_limit = 0
-        processes_to_spawn = process_limit + 2
-
-        with self.sandbox:
-            self._do_process_resource_limit_test(
-                processes_to_spawn, process_limit, self.sandbox)
-
-    def test_command_doesnt_exceed_process_limit(self):
-        process_limit = 10
-        processes_to_spawn = process_limit - 2
-
-        with self.sandbox:
-            self._do_process_resource_limit_test(
-                processes_to_spawn, process_limit, self.sandbox)
-
-    def test_command_spawns_no_processes_with_limit_zero(self):
-        with self.sandbox:
-            self._do_process_resource_limit_test(0, 0, self.sandbox)
-
-    def test_command_exceeds_stack_size_limit(self):
+    def test_command_exceeds_stack_size_limit(self) -> None:
         stack_size_limit = mb_to_bytes(5)
         mem_to_use = stack_size_limit * 2
         with self.sandbox:
             self._do_stack_resource_limit_test(
                 mem_to_use, stack_size_limit, self.sandbox)
 
-    def test_command_doesnt_exceed_stack_size_limit(self):
+    def test_command_doesnt_exceed_stack_size_limit(self) -> None:
         stack_size_limit = mb_to_bytes(30)
         mem_to_use = stack_size_limit // 2
         with self.sandbox:
             self._do_stack_resource_limit_test(
                 mem_to_use, stack_size_limit, self.sandbox)
 
-    def test_command_exceeds_virtual_mem_limit(self):
+    def test_command_exceeds_virtual_mem_limit(self) -> None:
         virtual_mem_limit = mb_to_bytes(100)
         mem_to_use = virtual_mem_limit * 2
         with self.sandbox:
             self._do_heap_resource_limit_test(
                 mem_to_use, virtual_mem_limit, self.sandbox)
 
-    def test_command_doesnt_exceed_virtual_mem_limit(self):
+    def test_command_doesnt_exceed_virtual_mem_limit(self) -> None:
         virtual_mem_limit = mb_to_bytes(100)
         mem_to_use = virtual_mem_limit // 2
         with self.sandbox:
             self._do_heap_resource_limit_test(
                 mem_to_use, virtual_mem_limit, self.sandbox)
 
-    def test_run_subsequent_commands_with_different_resource_limits(self):
+    def test_run_subsequent_commands_with_different_resource_limits(self) -> None:
         with self.sandbox:
             # Under limit
             self._do_stack_resource_limit_test(
@@ -500,42 +477,30 @@ class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
             self._do_heap_resource_limit_test(
                 mb_to_bytes(250), mb_to_bytes(200), self.sandbox)
 
-            # Under limit
-            self._do_process_resource_limit_test(0, 0, self.sandbox)
-            # Over previous limit
-            self._do_process_resource_limit_test(2, 0, self.sandbox)
-            # Limit raised
-            self._do_process_resource_limit_test(2, 5, self.sandbox)
-            # Over new limit
-            self._do_process_resource_limit_test(10, 7, self.sandbox)
-
-    def _do_stack_resource_limit_test(self, mem_to_use, mem_limit, sandbox):
+    def _do_stack_resource_limit_test(
+        self, mem_to_use: int, mem_limit: int, sandbox: AutograderSandbox
+    ) -> None:
         prog_ret_code = _run_stack_usage_prog(mem_to_use, mem_limit, sandbox)
 
         self._check_resource_limit_test_result(
             prog_ret_code, mem_to_use, mem_limit)
 
-    def _do_heap_resource_limit_test(self, mem_to_use, mem_limit, sandbox):
+    def _do_heap_resource_limit_test(
+        self, mem_to_use: int, mem_limit: int, sandbox: AutograderSandbox
+    ) -> None:
         prog_ret_code = _run_heap_usage_prog(mem_to_use, mem_limit, sandbox)
         self._check_resource_limit_test_result(
             prog_ret_code, mem_to_use, mem_limit)
 
-    def _do_process_resource_limit_test(self, num_processes_to_spawn,
-                                        process_limit, sandbox):
-        prog_ret_code = _run_process_spawning_prog(
-            num_processes_to_spawn, process_limit, sandbox)
-
-        self._check_resource_limit_test_result(
-            prog_ret_code, num_processes_to_spawn, process_limit)
-
-    def _check_resource_limit_test_result(self, ret_code, resource_used,
-                                          resource_limit):
+    def _check_resource_limit_test_result(
+        self, ret_code: Optional[int], resource_used: int, resource_limit: int
+    ) -> None:
         if resource_used > resource_limit:
             self.assertNotEqual(0, ret_code)
         else:
             self.assertEqual(0, ret_code)
 
-    def test_multiple_containers_dont_exceed_ulimits(self):
+    def test_multiple_containers_dont_exceed_ulimits(self) -> None:
         """
         One quirk of docker containers is that if there are multiple users
         created in different containers but with the same UID, the resource
@@ -548,30 +513,24 @@ class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
         self._do_parallel_container_heap_limit_test(
             16, mb_to_bytes(300), mb_to_bytes(500))
 
-        self._do_parallel_container_process_limit_test(16, 3, 5)
-        self._do_parallel_container_process_limit_test(15, 0, 0)
-
-    def _do_parallel_container_stack_limit_test(self, num_containers,
-                                                mem_to_use, mem_limit):
+    def _do_parallel_container_stack_limit_test(
+        self, num_containers: int, mem_to_use: int, mem_limit: int
+    ) -> None:
         self._do_parallel_container_resource_limit_test(
             _run_stack_usage_prog, num_containers, mem_to_use, mem_limit)
 
-    def _do_parallel_container_heap_limit_test(self, num_containers,
-                                               mem_to_use, mem_limit):
+    def _do_parallel_container_heap_limit_test(
+        self, num_containers: int, mem_to_use: int, mem_limit: int
+    ) -> None:
         self._do_parallel_container_resource_limit_test(
             _run_heap_usage_prog, num_containers, mem_to_use, mem_limit)
 
-    def _do_parallel_container_process_limit_test(self, num_containers,
-                                                  num_processes_to_spawn,
-                                                  process_limit):
-        self._do_parallel_container_resource_limit_test(
-            _run_process_spawning_prog, num_containers,
-            num_processes_to_spawn, process_limit)
-
-    def _do_parallel_container_resource_limit_test(self, func_to_run,
-                                                   num_containers,
-                                                   amount_to_use,
-                                                   resource_limit):
+    def _do_parallel_container_resource_limit_test(
+        self, func_to_run: Callable[[int, int, AutograderSandbox], Optional[int]],
+        num_containers: int,
+        amount_to_use: int,
+        resource_limit: int
+    ) -> None:
         with multiprocessing.Pool(processes=num_containers) as p:
             return_codes = p.starmap(
                 func_to_run,
@@ -583,8 +542,10 @@ class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
             self.assertEqual(0, ret_code)
 
 
-def _run_stack_usage_prog(mem_to_use, mem_limit, sandbox):
-    def _run_prog(sandbox):
+def _run_stack_usage_prog(
+    mem_to_use: int, mem_limit: int, sandbox: AutograderSandbox
+) -> Optional[int]:
+    def _run_prog(sandbox: AutograderSandbox) -> Optional[int]:
         prog = _STACK_USAGE_PROG_TMPL.format(num_bytes_on_stack=mem_to_use)
         filename = _add_string_to_sandbox_as_file(prog, '.cpp', sandbox)
         exe_name = _compile_in_sandbox(sandbox, filename)
@@ -618,8 +579,10 @@ int main() {{
 """
 
 
-def _run_heap_usage_prog(mem_to_use, mem_limit, sandbox):
-    def _run_prog(sandbox):
+def _run_heap_usage_prog(
+    mem_to_use: int, mem_limit: int, sandbox: AutograderSandbox
+) -> Optional[int]:
+    def _run_prog(sandbox: AutograderSandbox) -> Optional[int]:
         prog = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=mem_to_use, sleep_time=2)
         filename = _add_string_to_sandbox_as_file(prog, '.cpp', sandbox)
         exe_name = _compile_in_sandbox(sandbox, filename)
@@ -656,28 +619,12 @@ int main() {{
 """
 
 
-def _compile_in_sandbox(sandbox, *files_to_compile):
+def _compile_in_sandbox(sandbox: AutograderSandbox, *files_to_compile: str) -> str:
     exe_name = 'prog'
     sandbox.run_command(
         ['g++', '--std=c++11', '-Wall', '-Werror'] + list(files_to_compile)
         + ['-o', exe_name], check=True)
     return exe_name
-
-
-def _run_process_spawning_prog(num_processes_to_spawn, process_limit,
-                               sandbox):
-    def _run_prog(sandbox):
-        prog = _PROCESS_SPAWN_PROG_TMPL.format(
-            num_processes=num_processes_to_spawn,
-            sleep_time=2
-        )
-        filename = _add_string_to_sandbox_as_file(prog, '.py', sandbox)
-
-        result = sandbox.run_command(['python3', filename],
-                                     max_num_processes=process_limit)
-        return result.return_code
-
-    return _call_function_and_allocate_sandbox_if_needed(_run_prog, sandbox)
 
 
 _PROCESS_SPAWN_PROG_TMPL = """
@@ -697,7 +644,9 @@ for proc in processes:
 """
 
 
-def _add_string_to_sandbox_as_file(string, file_extension, sandbox):
+def _add_string_to_sandbox_as_file(
+    string: str, file_extension: str, sandbox: AutograderSandbox
+) -> str:
     with tempfile.NamedTemporaryFile('w+', suffix=file_extension) as f:
         f.write(string)
         f.seek(0)
@@ -706,7 +655,12 @@ def _add_string_to_sandbox_as_file(string, file_extension, sandbox):
         return os.path.basename(f.name)
 
 
-def _call_function_and_allocate_sandbox_if_needed(func, sandbox):
+ReturnType = TypeVar('ReturnType')
+
+
+def _call_function_and_allocate_sandbox_if_needed(
+    func: Callable[[AutograderSandbox], ReturnType], sandbox: Optional[AutograderSandbox]
+) -> ReturnType:
     if sandbox is None:
         sandbox = AutograderSandbox()
         with sandbox:
@@ -821,22 +775,22 @@ _GOOGLE_IP_ADDR = "216.58.214.196"
 
 class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
 
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
 
         self.google_ping_cmd = ['ping', '-c', '5', _GOOGLE_IP_ADDR]
 
-    def test_networking_disabled(self):
+    def test_networking_disabled(self) -> None:
         with AutograderSandbox() as sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
             self.assertNotEqual(0, result.return_code)
 
-    def test_networking_enabled(self):
+    def test_networking_enabled(self) -> None:
         with AutograderSandbox(allow_network_access=True) as sandbox:
             result = sandbox.run_command(self.google_ping_cmd)
             self.assertEqual(0, result.return_code)
 
-    def test_set_allow_network_access(self):
+    def test_set_allow_network_access(self) -> None:
         sandbox = AutograderSandbox()
         self.assertFalse(sandbox.allow_network_access)
         with sandbox:
@@ -855,7 +809,7 @@ class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
             result = sandbox.run_command(self.google_ping_cmd)
             self.assertNotEqual(0, result.return_code)
 
-    def test_error_set_allow_network_access_while_running(self):
+    def test_error_set_allow_network_access_while_running(self) -> None:
         with AutograderSandbox() as sandbox:
             with self.assertRaises(ValueError):
                 sandbox.allow_network_access = True
@@ -867,7 +821,7 @@ class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
 
 class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
 
-    def test_copy_files_into_sandbox(self):
+    def test_copy_files_into_sandbox(self) -> None:
         files = []
         try:
             for i in range(10):
@@ -899,7 +853,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
             for file_ in files:
                 file_.close()
 
-    def test_copy_and_rename_file_into_sandbox(self):
+    def test_copy_and_rename_file_into_sandbox(self) -> None:
         expected_content = 'this is a file'
         with tempfile.NamedTemporaryFile('w+') as f:
             f.write(expected_content)
@@ -917,7 +871,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
                 actual_content = sandbox.run_command(['cat', new_name]).stdout.read().decode()
                 self.assertEqual(expected_content, actual_content)
 
-    def test_add_files_root_owner_and_read_only(self):
+    def test_add_files_root_owner_and_read_only(self) -> None:
         original_content = "some stuff you shouldn't change"
         overwrite_content = 'lol I changed it anyway u nub'
         with tempfile.NamedTemporaryFile('w+') as f:
@@ -960,7 +914,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
                 ).stdout.read().decode()
                 self.assertEqual(overwrite_content, actual_content)
 
-    def test_overwrite_non_read_only_file(self):
+    def test_overwrite_non_read_only_file(self) -> None:
         original_content = "some stuff"
         overwrite_content = 'some new stuff'
         with tempfile.NamedTemporaryFile('w+') as f:
@@ -984,7 +938,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
                 ).stdout.read().decode()
                 self.assertEqual(overwrite_content, actual_content)
 
-    def test_error_add_files_invalid_owner(self):
+    def test_error_add_files_invalid_owner(self) -> None:
         with AutograderSandbox() as sandbox:
             with self.assertRaises(ValueError):
                 sandbox.add_files('steve', owner='not_an_owner')
