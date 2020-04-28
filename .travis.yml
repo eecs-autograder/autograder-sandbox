@@ -1,16 +1,18 @@
 sudo: required
 
 services:
-    - docker
-    - redis-server
+  - docker
 
 language: python
 python:
-    - "3.5"
+  - "3.6"
 
 install:
-    - pip install -r requirements.txt
-    - pip install -r requirements-dev.txt
+  - pip install -r requirements.txt
+  - pip install -r requirements-dev.txt
 
 script:
-    - pycodestyle autograder_sandbox && pydocstyle autograder_sandbox && python3 -m unittest discover -v
+    pycodestyle autograder_sandbox &&
+    pydocstyle autograder_sandbox &&
+    mypy autograder_sandbox &&
+    python3 -m unittest discover -v

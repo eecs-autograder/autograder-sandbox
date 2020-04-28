@@ -69,3 +69,4 @@ tags
 *.rdb
 non-utf.txt
 .idea
+.mypy_cache

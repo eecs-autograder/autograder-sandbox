@@ -4,20 +4,18 @@ import subprocess
 import tarfile
 import tempfile
 import uuid
-from io import FileIO
-from typing import List, Union
-
-import redis
-
+from typing import (IO, AnyStr, BinaryIO, Iterator, List, Mapping, NoReturn, Optional, Sequence,
+                    Union)
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
+# KEEP UP TO DATE WITH SANDBOX_USERNAME IN cmd_runner.py
 SANDBOX_USERNAME = 'autograder'
 SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'jameslp/ag-ubuntu-16:1')
 
-SANDBOX_PIDS_LIMIT = os.environ.get('SANDBOX_PIDS_LIMIT', 512)
-SANDBOX_MEM_LIMIT = os.environ.get('SANDBOX_MEM_LIMIT', 8 * 10 ** 9)
-SANDBOX_MIN_FALLBACK_TIMEOUT = os.environ.get('SANDBOX_MIN_FALLBACK_TIMEOUT', 60)
+SANDBOX_PIDS_LIMIT = int(os.environ.get('SANDBOX_PIDS_LIMIT', 512))
+SANDBOX_MEM_LIMIT = int(os.environ.get('SANDBOX_MEM_LIMIT', 8 * 10 ** 9))
+SANDBOX_MIN_FALLBACK_TIMEOUT = int(os.environ.get('SANDBOX_MIN_FALLBACK_TIMEOUT', 60))
 
 CMD_RUNNER_PATH = '/usr/local/bin/cmd_runner.py'
 
@@ -44,15 +42,15 @@ class AutograderSandbox:
     respectively.
     """
 
-    def __init__(self, name: str=None,
-                 docker_image: str=SANDBOX_DOCKER_IMAGE,
-                 allow_network_access: bool=False,
-                 environment_variables: dict=None,
-                 container_create_timeout: int=None,
-                 pids_limit: int=SANDBOX_PIDS_LIMIT,
-                 memory_limit: Union[int, str]=SANDBOX_MEM_LIMIT,
-                 min_fallback_timeout: int=SANDBOX_MIN_FALLBACK_TIMEOUT,
-                 debug=False) -> None:
+    def __init__(self, name: Optional[str] = None,
+                 docker_image: str = SANDBOX_DOCKER_IMAGE,
+                 allow_network_access: bool = False,
+                 environment_variables: Optional[Mapping[str, str]] = None,
+                 container_create_timeout: Optional[int] = None,
+                 pids_limit: int = SANDBOX_PIDS_LIMIT,
+                 memory_limit: Union[int, str] = SANDBOX_MEM_LIMIT,
+                 min_fallback_timeout: int = SANDBOX_MIN_FALLBACK_TIMEOUT,
+                 debug: bool = False):
         """
         :param name: A human-readable name that can be used to identify
             this sandbox instance. This value must be unique across all
@@ -132,7 +130,6 @@ class AutograderSandbox:
             self._name = name
 
         self._docker_image = docker_image
-        self._linux_uid = _get_next_linux_uid()
         self._allow_network_access = allow_network_access
         self._environment_variables = environment_variables
         self._is_running = False
@@ -142,11 +139,11 @@ class AutograderSandbox:
         self._min_fallback_timeout = min_fallback_timeout
         self.debug = debug
 
-    def __enter__(self):
+    def __enter__(self) -> 'AutograderSandbox':
         self._create_and_start()
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: object) -> None:
         self._destroy()
 
     def reset(self) -> None:
@@ -158,14 +155,14 @@ class AutograderSandbox:
         self._destroy()
         self._create_and_start()
 
-    def restart(self):
+    def restart(self) -> None:
         """
         Restarts the sandbox without destroying it.
         """
         self._stop()
         subprocess.check_call(['docker', 'start', self.name])
 
-    def _create_and_start(self):
+    def _create_and_start(self) -> None:
         create_args = [
             'docker', 'run',
             '--name=' + self.name,
@@ -199,11 +196,6 @@ class AutograderSandbox:
 
         subprocess.check_call(create_args, timeout=self._container_create_timeout)
         try:
-            subprocess.run(
-                ['docker', 'exec', '-i', self.name, 'usermod', '-u',
-                 str(self._linux_uid), SANDBOX_USERNAME],
-                check=True)
-
             cmd_runner_source = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
                 'docker-image-setup',
@@ -225,12 +217,12 @@ class AutograderSandbox:
 
         self._is_running = True
 
-    def _destroy(self):
+    def _destroy(self) -> None:
         self._stop()
         subprocess.check_call(['docker', 'rm', self.name])
         self._is_running = False
 
-    def _stop(self):
+    def _stop(self) -> None:
         subprocess.check_call(['docker', 'stop', '--time', '1', self.name])
 
     @property
@@ -257,7 +249,7 @@ class AutograderSandbox:
         return self._allow_network_access
 
     @allow_network_access.setter
-    def allow_network_access(self, value: bool):
+    def allow_network_access(self, value: bool) -> None:
         """
         Raises ValueError if this sandbox instance is currently running.
         """
@@ -268,7 +260,7 @@ class AutograderSandbox:
         self._allow_network_access = value
 
     @property
-    def environment_variables(self) -> dict:
+    def environment_variables(self) -> Mapping[str, str]:
         """
         A dictionary of environment variables to be set inside the
         sandbox (Read only).
@@ -280,15 +272,15 @@ class AutograderSandbox:
 
     def run_command(self,
                     args: List[str],
-                    max_num_processes: int=None,
-                    max_stack_size: int=None,
-                    max_virtual_memory: int=None,
-                    as_root: bool=False,
-                    stdin: FileIO=None,
-                    timeout: int=None,
-                    check: bool=False,
-                    truncate_stdout: int=None,
-                    truncate_stderr: int=None) -> 'CompletedCommand':
+                    max_num_processes: Optional[int] = None,
+                    max_stack_size: Optional[int] = None,
+                    max_virtual_memory: Optional[int] = None,
+                    as_root: bool = False,
+                    stdin: Optional[IO[AnyStr]] = None,
+                    timeout: Optional[int] = None,
+                    check: bool = False,
+                    truncate_stdout: Optional[int] = None,
+                    truncate_stderr: Optional[int] = None) -> 'CompletedCommand':
         """
         Runs a command inside the sandbox and returns the results.
 
@@ -344,8 +336,8 @@ class AutograderSandbox:
         if truncate_stderr is not None:
             cmd += ['--truncate_stderr', str(truncate_stderr)]
 
-        if not as_root:
-            cmd += ['--linux_user_id', str(self._linux_uid)]
+        if as_root:
+            cmd += ['--as_root']
 
         cmd += args
 
@@ -383,9 +375,7 @@ class AutograderSandbox:
                                           stderr_truncated=results_json['stderr_truncated'])
 
                 if (result.return_code != 0 or results_json['timed_out']) and check:
-                    raise subprocess.CalledProcessError(
-                        result.return_code, cmd,
-                        output=result.stdout, stderr=result.stderr)
+                    self._raise_sandbox_command_error(stdout=runner_stdout, stderr=runner_stderr)
 
                 return result
             except subprocess.TimeoutExpired as e:
@@ -414,15 +404,35 @@ class AutograderSandbox:
                     stderr_truncated=True,
                 )
             except subprocess.CalledProcessError as e:
-                runner_stdout.seek(0)
-                runner_stderr.seek(0)
-                raise SandboxCommandError(
-                    runner_stdout.read().decode('utf-8', 'surrogateescape')
-                    + '\n'
-                    + runner_stderr.read().decode('utf-8', 'surrogateescape')
-                ) from e
+                # For some reason mypy wants us to return, even though
+                # _raise_sandbox_command_error is NoReturn
+                return self._raise_sandbox_command_error(
+                    stdout=runner_stdout, stderr=runner_stderr, original_error=e)
 
-    def add_files(self, *filenames: str, owner: str=SANDBOX_USERNAME, read_only: bool=False):
+    def _raise_sandbox_command_error(
+        self, *,
+        stdout: IO[bytes],
+        stderr: IO[bytes],
+        original_error: Optional[Exception] = None
+    ) -> NoReturn:
+        stdout.seek(0)
+        stderr.seek(0)
+        new_error = SandboxCommandError(
+            stdout.read().decode('utf-8', 'surrogateescape')
+            + '\n'
+            + stderr.read().decode('utf-8', 'surrogateescape')
+        )
+
+        if original_error is not None:
+            raise new_error from original_error
+        else:
+            raise new_error
+
+    def add_files(
+        self, *filenames: str,
+        owner: str = SANDBOX_USERNAME,
+        read_only: bool = False
+    ) -> None:
         """
         Copies the specified files into the working directory of this
         sandbox.
@@ -469,7 +479,7 @@ class AutograderSandbox:
         subprocess.check_call(['docker', 'cp', filename, dest])
         self._chown_files([new_filename])
 
-    def _chown_files(self, filenames):
+    def _chown_files(self, filenames: Sequence[str]) -> None:
         chown_cmd = [
             'chown', '{}:{}'.format(SANDBOX_USERNAME, SANDBOX_USERNAME)]
         chown_cmd += filenames
@@ -478,7 +488,11 @@ class AutograderSandbox:
 
 # Generator that reads amount_to_read bytes from file_obj, yielding
 # one chunk at a time.
-def _chunked_read(file_obj, amount_to_read, chunk_size=1024 * 16):
+def _chunked_read(
+    file_obj: IO[bytes],
+    amount_to_read: int,
+    chunk_size: int = 1024 * 16
+) -> Iterator[bytes]:
     num_reads = amount_to_read // chunk_size
     for i in range(num_reads):
         yield file_obj.read(chunk_size)
@@ -489,8 +503,14 @@ def _chunked_read(file_obj, amount_to_read, chunk_size=1024 * 16):
 
 
 class CompletedCommand:
-    def __init__(self, return_code: int, stdout: FileIO, stderr: FileIO, timed_out: bool,
-                 stdout_truncated: bool, stderr_truncated: bool):
+    def __init__(
+        self, return_code: Optional[int],
+        stdout: IO[bytes],
+        stderr: IO[bytes],
+        timed_out: bool,
+        stdout_truncated: bool,
+        stderr_truncated: bool
+    ):
         """
         :param return_code: The return code of the command,
             or None if the command timed out.
@@ -508,17 +528,3 @@ class CompletedCommand:
         self.timed_out = timed_out
         self.stdout_truncated = stdout_truncated
         self.stderr_truncated = stderr_truncated
-
-
-_REDIS_SETTINGS = {
-    'host': os.environ.get('AG_REDIS_HOST', 'localhost'),
-    'port': os.environ.get('AG_REDIS_PORT', '6379')
-}
-
-_NEXT_UID_KEY = 'sandbox_next_uid'
-
-
-def _get_next_linux_uid():
-    redis_conn = redis.StrictRedis(**_REDIS_SETTINGS)
-    redis_conn.setnx('sandbox_next_uid', 2000)
-    return redis_conn.incr(_NEXT_UID_KEY)

@@ -2,16 +2,17 @@ import argparse
 import os
 import tempfile
 import time
+from typing import Optional
 
-from autograder_sandbox import AutograderSandbox, SandboxCommandError
+from .autograder_sandbox import AutograderSandbox, SandboxCommandError
 
 
-def main():
+def main() -> None:
     args = parse_args()
     output_size_performance_test(args.output_size, stderr=args.stderr, truncate=args.truncate)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument('output_size', type=int)
     parser.add_argument('--stderr', action='store_true', default=False)
@@ -20,7 +21,11 @@ def parse_args():
     return parser.parse_args()
 
 
-def output_size_performance_test(output_size, *, stderr=True, truncate=None):
+def output_size_performance_test(
+    output_size: int,
+    *, stderr: bool = True,
+    truncate: Optional[int] = None
+) -> None:
     with AutograderSandbox() as sandbox:
         start = time.time()
         result = sandbox.run_command(

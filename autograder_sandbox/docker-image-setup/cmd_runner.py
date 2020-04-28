@@ -11,6 +11,11 @@ import json
 import tempfile
 import uuid
 import shutil
+import grp
+
+
+# KEEP UP TO DATE WITH SANDBOX_USERNAME IN autograder_sandbox.py
+SANDBOX_USERNAME = 'autograder'
 
 
 def main():
@@ -18,14 +23,9 @@ def main():
 
     def set_subprocess_rlimits():
         try:
-            if args.linux_user_id is not None:
-                os.setgid(args.linux_user_id)
-                os.setuid(args.linux_user_id)
-
-            if args.max_num_processes is not None:
-                resource.setrlimit(
-                    resource.RLIMIT_NPROC,
-                    (args.max_num_processes, args.max_num_processes))
+            if not args.as_root:
+                os.setgid(grp.getgrnam('autograder').gr_gid)
+                os.setuid(pwd.getpwnam('autograder').pw_uid)
 
             if args.max_stack_size is not None:
                 resource.setrlimit(
@@ -57,8 +57,7 @@ def main():
     with tempfile.NamedTemporaryFile() as stdout, tempfile.NamedTemporaryFile() as stderr:
         # Adopted from https://github.com/python/cpython/blob/3.5/Lib/subprocess.py#L378
         env_copy = os.environ.copy()
-        if args.linux_user_id is not None:
-            # KEEP UP TO DATE WITH SANDBOX_USERNAME IN autograder_sandbox.py
+        if not args.as_root:
             record = pwd.getpwnam('autograder')
             env_copy['HOME'] = record.pw_dir
             env_copy['USER'] = record.pw_name
@@ -130,7 +129,7 @@ def parse_args():
     parser.add_argument("--max_virtual_memory", type=int)
     parser.add_argument("--truncate_stdout", type=int)
     parser.add_argument("--truncate_stderr", type=int)
-    parser.add_argument("--linux_user_id", type=int)
+    parser.add_argument("--as_root", action='store_true', default=False)
     parser.add_argument("--stdin_devnull", action='store_true', default=False)
     parser.add_argument("cmd_args", nargs=argparse.REMAINDER)
 
