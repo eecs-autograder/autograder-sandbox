@@ -124,7 +124,6 @@ def main():
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=int)
-    parser.add_argument("--max_num_processes", type=int)
     parser.add_argument("--max_stack_size", type=int)
     parser.add_argument("--max_virtual_memory", type=int)
     parser.add_argument("--truncate_stdout", type=int)

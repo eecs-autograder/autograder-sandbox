@@ -170,7 +170,6 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         with AutograderSandbox() as sandbox:
             result = sandbox.run_command(
                 ['python3', '-c', "import sys; sys.stdin.read(); print('done')"],
-                max_num_processes=10,
                 max_stack_size=10000000,
                 max_virtual_memory=500000000,
                 timeout=2,
