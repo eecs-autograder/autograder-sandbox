@@ -27,6 +27,9 @@ def main():
                 os.setgid(grp.getgrnam('autograder').gr_gid)
                 os.setuid(pwd.getpwnam('autograder').pw_uid)
 
+            if args.block_process_spawn:
+                resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+
             if args.max_stack_size is not None:
                 resource.setrlimit(
                     resource.RLIMIT_STACK,
@@ -124,6 +127,7 @@ def main():
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=int)
+    parser.add_argument("--block_process_spawn", action='store_true', default=False)
     parser.add_argument("--max_stack_size", type=int)
     parser.add_argument("--max_virtual_memory", type=int)
     parser.add_argument("--truncate_stdout", type=int)
