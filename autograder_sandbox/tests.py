@@ -420,6 +420,26 @@ class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
             result = self.sandbox.run_command(["sleep", "10"], timeout=1)
             self.assertTrue(result.timed_out)
 
+    def test_block_process_spawn(self) -> None:
+        cmd = ['bash', '-c', 'echo spam | cat > egg.txt']
+        with self.sandbox:
+            # Spawning processes is allowed by default
+            filename = _add_string_to_sandbox_as_file(
+                _PROCESS_SPAWN_PROG_TMPL.format(num_processes=12, sleep_time=3), '.py',
+                self.sandbox
+            )
+            result = self.sandbox.run_command(['python3', filename])
+            self.assertEqual(0, result.return_code)
+
+            result = self.sandbox.run_command(['python3', filename], block_process_spawn=True)
+            stdout = result.stdout.read().decode()
+            print(stdout)
+            stderr = result.stderr.read().decode()
+            print(stderr)
+            self.assertNotEqual(0, result.return_code)
+            self.assertIn('BlockingIOError', stderr)
+            self.assertIn('Resource temporarily unavailable', stderr)
+
     def test_command_exceeds_stack_size_limit(self) -> None:
         stack_size_limit = mb_to_bytes(5)
         mem_to_use = stack_size_limit * 2
@@ -501,10 +521,10 @@ class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
 
     def test_multiple_containers_dont_exceed_ulimits(self) -> None:
         """
-        One quirk of docker containers is that if there are multiple users
-        created in different containers but with the same UID, the resource
-        usage of all those users will contribute to hitting the same ulimits.
-        This test makes sure that valid processes aren't randomly cut off.
+        This is a sanity check to make sure that ulimits placed on
+        different containers with the same UID don't conflict. All
+        ulimits except for nproc are supposed to be process-linked
+        rather than UID-linked.
         """
         self._do_parallel_container_stack_limit_test(
             16, mb_to_bytes(20), mb_to_bytes(30))

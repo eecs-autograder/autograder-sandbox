@@ -272,6 +272,7 @@ class AutograderSandbox:
 
     def run_command(self,
                     args: List[str],
+                    block_process_spawn: bool = False,
                     max_stack_size: Optional[int] = None,
                     max_virtual_memory: Optional[int] = None,
                     as_root: bool = False,
@@ -285,6 +286,9 @@ class AutograderSandbox:
 
         :param args: A list of strings that specify which command should
             be run inside the sandbox.
+
+        :param block_process_spawn: If true, prevent the command from
+            spawning child processes by setting the nproc limit to 0.
 
         :param max_stack_size: The maximum stack size, in bytes, allowed
             for the command.
@@ -313,6 +317,9 @@ class AutograderSandbox:
 
         if stdin is None:
             cmd.append('--stdin_devnull')
+
+        if block_process_spawn:
+            cmd += ['--block_process_spawn']
 
         if max_stack_size is not None:
             cmd += ['--max_stack_size', str(max_stack_size)]
