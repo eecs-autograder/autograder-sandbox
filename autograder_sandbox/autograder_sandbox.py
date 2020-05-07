@@ -11,10 +11,10 @@ SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
 # KEEP UP TO DATE WITH SANDBOX_USERNAME IN cmd_runner.py
 SANDBOX_USERNAME = 'autograder'
-SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'jameslp/ag-ubuntu-16:1')
+SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'jameslp/ag-ubuntu-16:latest')
 
 SANDBOX_PIDS_LIMIT = int(os.environ.get('SANDBOX_PIDS_LIMIT', 512))
-SANDBOX_MEM_LIMIT = int(os.environ.get('SANDBOX_MEM_LIMIT', 8 * 10 ** 9))
+SANDBOX_MEM_LIMIT = int(os.environ.get('SANDBOX_MEM_LIMIT', 4 * 10 ** 9))
 SANDBOX_MIN_FALLBACK_TIMEOUT = int(os.environ.get('SANDBOX_MIN_FALLBACK_TIMEOUT', 60))
 
 CMD_RUNNER_PATH = '/usr/local/bin/cmd_runner.py'
@@ -60,9 +60,10 @@ class AutograderSandbox:
 
         :param docker_image: The name of the docker image to create the
             sandbox from. Note that in order to function properly, all
-            custom docker images must extend jameslp/autograder-sandbox.
-            This value takes precedence over the value of the
-            environment variable SANDBOX_DOCKER_IMAGE.
+            custom docker images must extend a supported base image (see README).
+
+            The default value for this parameter can be changed by
+            setting the SANDBOX_DOCKER_IMAGE environment variable.
 
         :param allow_network_access: When True, programs running inside
             the sandbox will have unrestricted access to external

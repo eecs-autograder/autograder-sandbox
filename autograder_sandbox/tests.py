@@ -47,7 +47,7 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
         self.assertIsNotNone(sandbox.name)
         self.assertFalse(sandbox.allow_network_access)
         self.assertEqual({}, sandbox.environment_variables)
-        self.assertEqual('jameslp/ag-ubuntu-16:1', sandbox.docker_image)
+        self.assertEqual('jameslp/ag-ubuntu-16:latest', sandbox.docker_image)
 
     def test_non_default_init(self) -> None:
         docker_image = 'waaaaluigi'

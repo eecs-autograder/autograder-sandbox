@@ -14,8 +14,21 @@ The first time you start a sandbox (using a context manager), the appropriate Do
 
 ## Configuration
 ### Docker Image
-The Docker image used by default is [jameslp/ag-ubuntu-16:1](https://hub.docker.com/r/jameslp/ag-ubuntu-16/).
-If using a custom image, begin your custom Dockerfile with `FROM jameslp/ag-ubuntu-16:1`. Then, when creating the sandbox instance, pass the name of your custom image to the `docker_image` parameter. Alternatively, you can set the SANDBOX_DOCKER_IMAGE environment variable to that name.
+The Docker image used by default is [jameslp/ag-ubuntu-16:latest](https://hub.docker.com/r/jameslp/ag-ubuntu-16/).
+
+Supported base images:
+- jameslp/ag-ubuntu-16:latest
+
+If using a custom image, begin your custom Dockerfile with `FROM {base image}`, replacing `{base image}` with an image from the above list. Then, when creating an AutograderSandbox instance, pass the name of your custom image as the `docker_image` parameter. Alternatively, you can set the SANDBOX_DOCKER_IMAGE environment variable to that name to make that image the default.
+
+Additional supported base images will continue to be added. If you wish to build your own base image, please use the [Dockerfile in this repo](./autograder_sandbox/docker-image-setup/Dockerfile) as a starting point.
+
+### Environment Variables
+These variables can be used to override the default values of certain AutograderSandbox constructor parameters. In particular, we recommend setting `SANDBOX_MEM_LIMIT` to a value appropriate for your hardware.
+
+`SANDBOX_DOCKER_IMAGE`: The default docker image to use for new sandboxes. See also the
+`SANDBOX_MEM_LIMIT`: The default container-level physical memory limit. Defaults to 4GB.
+`SANDBOX_PIDS_LIMIT`: The default container-level process spawn limit. Defaults to 512.
 
 ## Basic usage
 ```
