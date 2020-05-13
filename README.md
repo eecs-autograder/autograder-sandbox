@@ -18,6 +18,7 @@ The Docker image used by default is [jameslp/ag-ubuntu-16:latest](https://hub.do
 
 Supported base images:
 - jameslp/ag-ubuntu-16:latest
+- jameslp/ag-ubuntu-16:1
 
 If using a custom image, begin your custom Dockerfile with `FROM {base image}`, replacing `{base image}` with an image from the above list. Then, when creating an AutograderSandbox instance, pass the name of your custom image as the `docker_image` parameter. Alternatively, you can set the SANDBOX_DOCKER_IMAGE environment variable to that name to make that image the default.
 
@@ -44,6 +45,17 @@ Versioning scheme:
 - 0.0.x releases contain minor tweaks or bug fixes.
 - 0.x.0 releases contain new features.
 - x.0.0 releases may contain backwards-incompatible changes.
+
+5.0.0 - Backwards-incompatible change to process spawn limit.
+- Issues fixed:
+    - [#41](https://github.com/eecs-autograder/autograder-sandbox/issues/41)
+        - Removed the ability to place a specific nproc ulimit on commands.
+          Instead, there is now a "block_process_spawn" option that sets the limit to 0 for the command. This let us remove the various hacks that we were using to work around the problem of "same UID in different containers, processes count towards same limit."
+          See also https://github.com/eecs-autograder/autograder-sandbox/pull/46
+    - [#43](https://github.com/eecs-autograder/autograder-sandbox/issues/43)
+        - Added mypy to the CI toolchain and added py.typed in order to make type annotations usable externally.
+- Other changes:
+    - Lowered the default container-level memory limit to 4GB.
 
 4.0.2 - Bug fix involving computing output size of TemporaryFile vs NamedTemporaryFile.
 
