@@ -14,7 +14,7 @@ SANDBOX_USERNAME = 'autograder'
 SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'jameslp/ag-ubuntu-16:latest')
 
 SANDBOX_PIDS_LIMIT = int(os.environ.get('SANDBOX_PIDS_LIMIT', 512))
-SANDBOX_MEM_LIMIT = int(os.environ.get('SANDBOX_MEM_LIMIT', 4 * 10 ** 9))
+SANDBOX_MEM_LIMIT = os.environ.get('SANDBOX_MEM_LIMIT', '4g')
 SANDBOX_MIN_FALLBACK_TIMEOUT = int(os.environ.get('SANDBOX_MIN_FALLBACK_TIMEOUT', 60))
 
 CMD_RUNNER_PATH = '/usr/local/bin/cmd_runner.py'
@@ -48,7 +48,7 @@ class AutograderSandbox:
                  environment_variables: Optional[Mapping[str, str]] = None,
                  container_create_timeout: Optional[int] = None,
                  pids_limit: int = SANDBOX_PIDS_LIMIT,
-                 memory_limit: Union[int, str] = SANDBOX_MEM_LIMIT,
+                 memory_limit: str = SANDBOX_MEM_LIMIT,
                  min_fallback_timeout: int = SANDBOX_MIN_FALLBACK_TIMEOUT,
                  debug: bool = False):
         """
@@ -172,8 +172,8 @@ class AutograderSandbox:
             '-d',  # Detached
 
             '--pids-limit', str(self._pids_limit),
-            '--memory', str(self._memory_limit),
-            '--memory-swap', str(self._memory_limit),
+            '--memory', self._memory_limit,
+            '--memory-swap', self._memory_limit,
             '--oom-kill-disable',
         ]
 
