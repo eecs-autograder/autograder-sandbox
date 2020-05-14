@@ -775,7 +775,7 @@ for i in range(2):
     # in and out.
     def test_memory_limit_no_oom_kill(self) -> None:
         program_str = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=4 * 10 ** 9, sleep_time=0)
-        with AutograderSandbox(memory_limit=2 * 10 ** 9) as sandbox:
+        with AutograderSandbox(memory_limit='2g') as sandbox:
             filename = _add_string_to_sandbox_as_file(program_str, '.cpp', sandbox)
             exe_name = _compile_in_sandbox(sandbox, filename)
             # The limit should apply to all users, root or otherwise
