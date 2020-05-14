@@ -3,7 +3,7 @@
 from setuptools import setup
 
 setup(name='autograder-sandbox',
-      version='4.0.2',
+      version='5.0.0rc1',
       description=('Python library for running untrusted '
                    'code in Docker containers'),
       author='James Perretta',
@@ -15,5 +15,4 @@ setup(name='autograder-sandbox',
       },
       url='https://github.com/eecs280staff/autograder-sandbox',
       license='GNU Lesser General Public License v3',
-      install_requires=['redis>=2.10.5'],
       classifiers=['Programming Language :: Python :: 3.6'])

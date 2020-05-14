@@ -27,8 +27,8 @@ Additional supported base images will continue to be added. If you wish to build
 ### Environment Variables
 These variables can be used to override the default values of certain AutograderSandbox constructor parameters. In particular, we recommend setting `SANDBOX_MEM_LIMIT` to a value appropriate for your hardware.
 
-`SANDBOX_DOCKER_IMAGE`: The default docker image to use for new sandboxes. See also the
-`SANDBOX_MEM_LIMIT`: The default container-level physical memory limit. Defaults to 4GB.
+`SANDBOX_DOCKER_IMAGE`: The default docker image to use for new sandbox instances.\
+`SANDBOX_MEM_LIMIT`: The default container-level physical memory limit. Defaults to 4GB.\
 `SANDBOX_PIDS_LIMIT`: The default container-level process spawn limit. Defaults to 512.
 
 ## Basic usage
