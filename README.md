@@ -14,15 +14,14 @@ The first time you start a sandbox (using a context manager), the appropriate Do
 
 ## Configuration
 ### Docker Image
-The Docker image used by default is [jameslp/ag-ubuntu-16:latest](https://hub.docker.com/r/jameslp/ag-ubuntu-16/).
+The Docker image used by default is the legacy image [jameslp/ag-ubuntu-16:latest](https://hub.docker.com/r/jameslp/ag-ubuntu-16/). __Please do not create any new images based on it__. Instead, custom images should be based on one of the images defined in the [base-docker-images repo](https://github.com/eecs-autograder/base-docker-images).
 
-Supported base images:
-- jameslp/ag-ubuntu-16:latest
-- jameslp/ag-ubuntu-16:1
+To specify which image to use, pass the name of the image as the `docker_image` parameter to the `AutograderSandbox` constructor. You can also set the `SANDBOX_DOCKER_IMAGE` environment variable to specify a new default value for that parameter.
 
-If using a custom image, begin your custom Dockerfile with `FROM {base image}`, replacing `{base image}` with an image from the above list. Then, when creating an AutograderSandbox instance, pass the name of your custom image as the `docker_image` parameter. Alternatively, you can set the SANDBOX_DOCKER_IMAGE environment variable to that name to make that image the default.
-
-Additional supported base images will continue to be added. If you wish to build your own base image, please use the [Dockerfile in this repo](./autograder_sandbox/docker-image-setup/Dockerfile) as a starting point.
+```
+with AutograderSandbox(docker_image='some_other_image:latest') as sandbox:
+    ...
+```
 
 ### Environment Variables
 These variables can be used to override the default values of certain AutograderSandbox constructor parameters. In particular, we recommend setting `SANDBOX_MEM_LIMIT` to a value appropriate for your hardware.
