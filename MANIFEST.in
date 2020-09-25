@@ -1,1 +1,2 @@
-include autograder_sandbox/docker-image-setup/cmd_runner.py
+graft autograder_sandbox
+global-exclude *.py[cod] __pycache__ *.so

@@ -10,9 +10,11 @@ python:
 install:
   - pip install -r requirements.txt
   - pip install -r requirements-dev.txt
+  - pip install check-manifest
 
 script:
     pycodestyle autograder_sandbox &&
     pydocstyle autograder_sandbox &&
     mypy autograder_sandbox &&
+    check-manifest --ignore 'docs/*','*.txt',.editorconfig &&
     python3 -m unittest discover -v
