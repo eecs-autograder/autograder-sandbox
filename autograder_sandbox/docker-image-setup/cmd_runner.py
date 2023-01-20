@@ -126,6 +126,11 @@ def main():
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--cmd_id",
+        help='A unique id that the caller can use to find the process '
+             'in which this command is running.'
+    )
     parser.add_argument("--timeout", type=int)
     parser.add_argument("--block_process_spawn", action='store_true', default=False)
     parser.add_argument("--max_stack_size", type=int)
