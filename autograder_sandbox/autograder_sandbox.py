@@ -30,12 +30,23 @@ SANDBOX_CPU_CORE_LIMIT = (
 CMD_RUNNER_PATH = '/usr/local/bin/cmd_runner.py'
 
 
-class SandboxCommandError(Exception):
+class SandboxError(Exception):
+    """A base exception class for this library."""
+
+
+class SandboxCommandError(SandboxError):
     """
     An exception to be raised when a call to AutograderSandbox.run_command
     doesn't finish normally.
     """
     pass
+
+
+class CriticalSandboxError(SandboxError):
+    """
+    An exception to be raised when unexpected errors are encountered
+    that require manual intervention.
+    """
 
 
 class AutograderSandbox:
@@ -59,6 +70,7 @@ class AutograderSandbox:
                  container_create_timeout: Optional[int] = None,
                  pids_limit: int = SANDBOX_PIDS_LIMIT,
                  memory_limit: str = SANDBOX_MEM_LIMIT,
+                 oom_kill_disable: bool = False,
                  min_fallback_timeout: int = SANDBOX_MIN_FALLBACK_TIMEOUT,
                  cpu_core_limit: Optional[Decimal] = SANDBOX_CPU_CORE_LIMIT,
                  debug: bool = False):
@@ -103,15 +115,13 @@ class AutograderSandbox:
             The default value for this parameter can be changed by
             setting the SANDBOX_PIDS_LIMIT environment variable.
 
-        :param memory_limit: Passed to "docker create" with the --memory,
-            --memory-swap, and --oom-kill-disable arguments. This will
+        :param memory_limit: Passed to "docker create" with the --memory
+            and --memory-swap arguments. This will
             limit the amount of memory that processes running in the
             sandbox can use.
 
-            We choose to disable the OOM killer to prevent the sandbox's
-            main process from being killed by the OOM killer (which would
-            cause the whole container to exit). This means, however, that
-            a command that hits the memory limit may time out.
+            New in version 6.0.0: The --oom-kill-disable option can be
+            set by setting the new oom_kill_disable parameter to True.
 
             In general we recommend setting this value as high as is safe
             for your host machine and additionally using the max_virtual_memory
@@ -123,6 +133,15 @@ class AutograderSandbox:
 
             See https://docs.docker.com/config/containers/resource_constraints/#limit-a-containers-access-to-memory
             for more information.
+
+        :param oom_kill_disable: When True, passes the --oom-kill-disable flag
+            to "docker create". Defaults to False.
+
+            See https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt and
+            https://docs.docker.com/config/containers/resource_constraints/#limit-a-containers-access-to-memory
+            for more information.
+
+            New in version 6.0.0
 
         :param min_fallback_timeout: The timeout argument to run_command
             is primarily enforced by cmd_runner.py. When that argument is
@@ -165,6 +184,7 @@ class AutograderSandbox:
         self._container_create_timeout = container_create_timeout
         self._pids_limit = pids_limit
         self._memory_limit = memory_limit
+        self._oom_kill_disable = oom_kill_disable
         self._min_fallback_timeout = min_fallback_timeout
         self._cpu_core_limit = cpu_core_limit
         self.debug = debug
@@ -202,8 +222,9 @@ class AutograderSandbox:
             '--pids-limit', str(self._pids_limit),
             '--memory', self._memory_limit,
             '--memory-swap', self._memory_limit,
-            '--oom-kill-disable',
         ]
+        if self._oom_kill_disable:
+            create_args.append('--oom-kill-disable')
 
         if self._cpu_core_limit is not None:
             create_args += ['--cpus', str(self._cpu_core_limit)]
@@ -231,7 +252,14 @@ class AutograderSandbox:
         # Create the container, copy our main process script (the name of which
         # contains self._unique_id) into it, then start the container.
 
-        subprocess.check_call(create_args, timeout=self._container_create_timeout)
+        try:
+            subprocess.check_call(create_args, timeout=self._container_create_timeout)
+        except subprocess.CalledProcessError as e:
+            logger.error(
+                f'Error creating container {self.name}\n'
+                f'Stdout:\n{e.stdout}'
+                f'Stderr:\n{e.stderr}'
+            )
 
         with tempfile.NamedTemporaryFile() as main_proc_script_file:
             # IMPORTANT: FLUSH THE STREAM AFTER WRITING!!
@@ -243,8 +271,15 @@ class AutograderSandbox:
                 main_proc_script_file.name, f'{self.name}:{self._main_process_script}'
             ])
 
-        subprocess.check_call(['docker', 'start', self.name],
-                              timeout=self._container_create_timeout)
+        try:
+            subprocess.check_call(['docker', 'start', self.name],
+                                  timeout=self._container_create_timeout)
+        except subprocess.CalledProcessError as e:
+            logger.error(
+                f'Error starting container {self.name}\n'
+                f'Stdout:\n{e.stdout}'
+                f'Stderr:\n{e.stderr}'
+            )
 
         # Add cmd_runner.py to the container and set its permissions.
         try:
@@ -305,7 +340,7 @@ class AutograderSandbox:
                     f'{self.name}: {fatal}\n'
                     + traceback.format_exc()
                 )
-                raise
+                raise CriticalSandboxError from fatal
 
     def _reap(self, search_for: str) -> None:
         """
@@ -455,6 +490,8 @@ class AutograderSandbox:
                     runner_stdout.seek(0)
 
                     if docker_exec_return_code != 0:
+                        logger.error(
+                            f'docker exec command exited with status {docker_exec_return_code}')
                         self._raise_sandbox_command_error(
                             stdout=runner_stdout, stderr=runner_stderr)
 

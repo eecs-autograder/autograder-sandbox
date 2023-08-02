@@ -23,7 +23,10 @@ def main():
 
     def set_subprocess_rlimits():
         try:
-            if not args.as_root:
+            if args.as_root:
+                os.setgid(0)
+                os.setuid(0)
+            else:
                 os.setgid(grp.getgrnam('autograder').gr_gid)
                 os.setuid(pwd.getpwnam('autograder').pw_uid)
 

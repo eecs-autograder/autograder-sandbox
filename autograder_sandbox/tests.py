@@ -770,6 +770,8 @@ for i in range(2):
             to_throw = subprocess.TimeoutExpired([], 60)
             subprocess_run_mock = mock.Mock(side_effect=to_throw)
             with mock.patch('subprocess.run', new=subprocess_run_mock):
+                # The value passed to "timeout" here should be overridden
+                # by the value passed to "min_fallback_timeout"
                 result = sandbox.run_command(['sleep', '20'], timeout=10)
                 stdout = result.stdout.read().decode()
                 stderr = result.stderr.read().decode()
@@ -781,21 +783,48 @@ for i in range(2):
                 self.assertIsNone(result.return_code)
                 self.assertIn('fallback timeout', stderr)
 
-    # Since we disable the OOM killer for the container, we expect
-    # commands to time out while waiting for memory to be paged
-    # in and out.
-    def test_memory_limit_no_oom_kill(self) -> None:
+    def test_memory_limit(self) -> None:
         program_str = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=4 * 10 ** 9, sleep_time=0)
         with AutograderSandbox(memory_limit='2g') as sandbox:
             filename = _add_string_to_sandbox_as_file(program_str, '.cpp', sandbox)
             exe_name = _compile_in_sandbox(sandbox, filename)
-            # The limit should apply to all users, root or otherwise
+            # The memory limit should apply to all users, root or otherwise
             result = sandbox.run_command(['./' + exe_name], timeout=20, as_root=True)
 
             print(result.return_code)
             print(result.stdout.read().decode())
             print(result.stderr.read().decode())
-            self.assertTrue(result.timed_out)
+            self.assertFalse(result.timed_out)
+            self.assertNotEqual(0, result.return_code)
+
+            still_up = sandbox.run_command(['echo', 'still alive'], timeout=5)
+            print(still_up.return_code)
+            print(still_up.stdout.read().decode())
+            print(still_up.stderr.read().decode())
+            self.assertEqual(0, still_up.return_code)
+
+    def test_memory_limit_many_small_processes(self) -> None:
+        program_str = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=4 * 10 ** 6, sleep_time=5)
+        with AutograderSandbox(memory_limit='256m') as sandbox:
+            filename = _add_string_to_sandbox_as_file(program_str, '.cpp', sandbox)
+            exe_name = _compile_in_sandbox(sandbox, filename)
+            # The memory limit should apply to all users, root or otherwise
+            result = sandbox.run_command(
+                ['bash', '-c', 'for i in {1..100}; do ./' + exe_name + ' &\n done; sleep 10'],
+                timeout=20, as_root=True
+            )
+
+            print(result.return_code)
+            print(result.stdout.read().decode())
+            print(result.stderr.read().decode())
+            self.assertFalse(result.timed_out)
+            self.assertNotEqual(0, result.return_code)
+
+            still_up = sandbox.run_command(['echo', 'still alive'], timeout=5)
+            print(still_up.return_code)
+            print(still_up.stdout.read().decode())
+            print(still_up.stderr.read().decode())
+            self.assertEqual(0, still_up.return_code)
 
 # -----------------------------------------------------------------------------
 
