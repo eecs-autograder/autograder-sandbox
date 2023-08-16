@@ -1,6 +1,7 @@
-from typing import Any
+from typing import Any, Union
 import json
 import os
+import signal
 import subprocess
 import tarfile
 import tempfile
@@ -30,6 +31,34 @@ SANDBOX_CPU_CORE_LIMIT = (
 CMD_RUNNER_PATH = '/usr/local/bin/cmd_runner.py'
 
 
+class CompletedCommand:
+    def __init__(
+        self, return_code: Optional[int],
+        stdout: IO[bytes],
+        stderr: IO[bytes],
+        timed_out: bool,
+        stdout_truncated: bool,
+        stderr_truncated: bool
+    ):
+        """
+        :param return_code: The return code of the command,
+            or None if the command timed out.
+        :param stdout: A file object containing the
+            stdout content of the command.
+        :param stderr: A file object containing the
+            stderr content of the command.
+        :param timed_out: Whether the command exceeded the time limit.
+        :param stdout_truncated: Whether stdout was truncated.
+        :param stderr_truncated: Whether stderr was truncated.
+        """
+        self.return_code = return_code
+        self.stdout = stdout
+        self.stderr = stderr
+        self.timed_out = timed_out
+        self.stdout_truncated = stdout_truncated
+        self.stderr_truncated = stderr_truncated
+
+
 class SandboxError(Exception):
     """A base exception class for this library."""
 
@@ -37,15 +66,29 @@ class SandboxError(Exception):
 class SandboxCommandError(SandboxError):
     """
     An exception to be raised when a call to AutograderSandbox.run_command
-    doesn't finish normally.
+    with check=True exits with nonzero status or times out.
     """
-    pass
+    def __init__(self, cmd: List[str], result: CompletedCommand) -> None:
+        """
+        :param cmd: The command that was run.
+        :param result: An object containing information about the run results
+            of the command.
+        """
+        self.cmd = cmd
+        self.result = result
 
 
 class CriticalSandboxError(SandboxError):
     """
-    An exception to be raised when unexpected errors are encountered
+    An exception to be raised when critical, unexpected errors are encountered
     that require manual intervention.
+    """
+
+
+class SandboxNotDestroyed(SandboxError):
+    """
+    An exception to be raised when an unexpected error occurs trying to
+    destroy a sandbox. Note that such an error is *not* considered critical.
     """
 
 
@@ -210,7 +253,11 @@ class AutograderSandbox:
         Restarts the sandbox without destroying it.
         """
         self._stop()
-        subprocess.check_call(['docker', 'start', self.name])
+        _subprocess_helper(
+            ['docker', 'start', self.name],
+            timeout=self._container_create_timeout,
+            error_msg_prefix='Error restarting container'
+        )
 
     def _create_and_start(self) -> None:
         create_args = [
@@ -252,34 +299,31 @@ class AutograderSandbox:
         # Create the container, copy our main process script (the name of which
         # contains self._unique_id) into it, then start the container.
 
-        try:
-            subprocess.check_call(create_args, timeout=self._container_create_timeout)
-        except subprocess.CalledProcessError as e:
-            logger.error(
-                f'Error creating container {self.name}\n'
-                f'Stdout:\n{e.stdout}'
-                f'Stderr:\n{e.stderr}'
-            )
+        _subprocess_helper(
+            create_args,
+            timeout=self._container_create_timeout,
+            error_msg_prefix=f'Error creating container {self.name}\n'
+        )
 
         with tempfile.NamedTemporaryFile() as main_proc_script_file:
             # IMPORTANT: FLUSH THE STREAM AFTER WRITING!!
             main_proc_script_file.write(b'while :\ndo read; done')
             main_proc_script_file.flush()
 
-            subprocess.check_call([
-                'docker', 'cp',
-                main_proc_script_file.name, f'{self.name}:{self._main_process_script}'
-            ])
-
-        try:
-            subprocess.check_call(['docker', 'start', self.name],
-                                  timeout=self._container_create_timeout)
-        except subprocess.CalledProcessError as e:
-            logger.error(
-                f'Error starting container {self.name}\n'
-                f'Stdout:\n{e.stdout}'
-                f'Stderr:\n{e.stderr}'
+            _subprocess_helper(
+                [
+                    'docker', 'cp',
+                    main_proc_script_file.name, f'{self.name}:{self._main_process_script}'
+                ],
+                timeout=60,
+                error_msg_prefix=f'Error adding entrypoint script to container {self.name}\n'
             )
+
+        _subprocess_helper(
+            ['docker', 'start', self.name],
+            timeout=self._container_create_timeout,
+            error_msg_prefix=f'Error starting container {self.name}\n'
+        )
 
         # Add cmd_runner.py to the container and set its permissions.
         try:
@@ -288,51 +332,66 @@ class AutograderSandbox:
                 'docker-image-setup',
                 'cmd_runner.py'
             )
-            subprocess.run(
+            _subprocess_helper(
                 ['docker', 'cp', cmd_runner_source, '{}:{}'.format(self.name, CMD_RUNNER_PATH)],
-                check=True, capture_output=True, errors='surrogateescape')
-            subprocess.run(
-                ['docker', 'exec', '-i', self.name, 'chmod', '555', CMD_RUNNER_PATH],
-                check=True, capture_output=True, errors='surrogateescape')
-        except subprocess.CalledProcessError as e:
-            logger.error(
-                f'Error adding cmd_runner.py to container {self.name}\n'
-                f'Stdout:\n{e.stdout}'
-                f'Stderr:\n{e.stderr}'
+                timeout=60,
+                error_msg_prefix=f'Error adding cmd_runner.py to container {self.name}\n'
             )
-
+            _subprocess_helper(
+                ['docker', 'exec', '-i', self.name, 'chmod', '555', CMD_RUNNER_PATH],
+                timeout=60,
+                error_msg_prefix=(
+                    f'Error setting cmd_runner.py permissions in container {self.name}\n'
+                )
+            )
+        except Exception as e:
             self._destroy()
             raise
 
         self._is_running = True
 
     def _destroy(self) -> None:
-        # Note: Since destroying containers isn't immediately mission-critical
-        # in production (the sysadmin can set up a cron job that runs docker
-        # prune), we log and ignore caught exceptions here.
         try:
             self._stop()
         except Exception as e:
             logger.error(str(e))
+            raise CriticalSandboxError from e
 
+        # Note: Since destroying containers isn't immediately mission-critical
+        # in production (the sysadmin can set up a cron job that runs docker
+        # prune), we throw SandboxNotDestroyed instead of CriticalSandboxError
         try:
-            subprocess.check_call(['docker', 'rm', '-f', self.name])
+            _subprocess_helper(
+                ['docker', 'rm', '-f', self.name],
+                timeout=15,
+                error_msg_prefix=f'Error destroying container {self.name}'
+            )
             self._is_running = False
         except Exception as e:
             logger.error(
                 'Unexpected error trying to destroy container '
                 f'{self.name}: {e}'
             )
+            raise SandboxNotDestroyed from e
 
     def _stop(self) -> None:
         try:
-            subprocess.run(['docker', 'stop', '--time', '1', self.name], timeout=10, check=True)
+            _subprocess_helper(
+                ['docker', 'stop', '--time', '5', self.name],
+                timeout=10,
+                error_msg_prefix=f'Error stopping container {self.name}'
+            )
             self._is_running = False
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
-            logger.error(f'Error stopping container {self.name}: {e}')
             try:
                 self._reap(self._main_process_script)
-                subprocess.run(['docker', 'stop', self.name], timeout=10, check=True)
+                _subprocess_helper(
+                    ['docker', 'stop', self.name],
+                    timeout=15,
+                    error_msg_prefix=(
+                        f'Error stopping container {self.name} after reaping proc tree'
+                    )
+                )
                 self._is_running = False
             except Exception as fatal:
                 logger.critical(
@@ -345,18 +404,26 @@ class AutograderSandbox:
     def _reap(self, search_for: str) -> None:
         """
         Search for the process that contains "search_for" in its command line
-        arguments. search_for should be either the unique ID inserted into
-        the main container process or the unique ID
+        arguments. search_for should be either the unique main container process
+        or the unique ID included in a call to cmd_runner.py
 
         Finds and kills the process tree whose root is the found process.
         Does not kill the root of the tree.
         """
-        try:
-            if (parent_proc := _find_process(search_for)) is not None:
-                logger.debug(f'Reaping children of {search_for}')
-                _kill_proc_descendents(parent_proc)
-        except psutil.NoSuchProcess:
-            pass
+        result = _subprocess_helper(
+            ['docker', 'run', '--rm', '--pid', 'host', 'jameslp/autograder-sandbox-reaper:1', search_for],
+            timeout=30,
+            error_msg_prefix=f'Error reaping children of {search_for}'
+        )
+        logger.debug(f'reaper exited with status {result.returncode}')
+        logger.debug(result.stdout)
+        logger.debug(result.stderr)
+        # try:
+        #     if (parent_proc := _find_process(search_for)) is not None:
+        #         logger.debug(f'Reaping children of {search_for} {parent_proc.cmdline()}')
+        #         _kill_proc_descendents(parent_proc)
+        # except psutil.NoSuchProcess:
+        #     pass
 
     @property
     def name(self) -> str:
@@ -437,7 +504,7 @@ class AutograderSandbox:
 
         :param timeout: The time limit for the command.
 
-        :param check: Causes CalledProcessError to be raised if the
+        :param check: Causes SandboxCommandError to be raised if the
             command exits nonzero or times out.
 
         :param truncate_stdout: When not None, stdout from the command
@@ -449,8 +516,8 @@ class AutograderSandbox:
         cmd_id = f'{self._unique_id}_cmd{uuid.uuid4().hex}'
         cmd = ['docker', 'exec', '-i', self.name, CMD_RUNNER_PATH, '--cmd_id', cmd_id]
 
-        if stdin is None:
-            cmd.append('--stdin_devnull')
+        # if stdin is None:
+        #     cmd.append('--stdin_devnull')
 
         if block_process_spawn:
             cmd += ['--block_process_spawn']
@@ -464,118 +531,86 @@ class AutograderSandbox:
         if timeout is not None:
             cmd += ['--timeout', str(timeout)]
 
-        if truncate_stdout is not None:
-            cmd += ['--truncate_stdout', str(truncate_stdout)]
+        # if truncate_stdout is not None:
+        #     cmd += ['--truncate_stdout', str(truncate_stdout)]
 
-        if truncate_stderr is not None:
-            cmd += ['--truncate_stderr', str(truncate_stderr)]
+        # if truncate_stderr is not None:
+        #     cmd += ['--truncate_stderr', str(truncate_stderr)]
 
         if as_root:
             cmd += ['--as_root']
 
         cmd += args
 
-        logger.debug(f'running: {cmd} in sandbox {self.name}')
+        logger.debug(f'Running: {cmd} in sandbox {self.name}')
 
-        with tempfile.TemporaryFile() as runner_stdout, tempfile.TemporaryFile() as runner_stderr:
-            fallback_timeout = (
-                max(timeout * 2, self._min_fallback_timeout) if timeout is not None else None)
-            with subprocess.Popen(cmd,
-                                  stdin=stdin,
-                                  stdout=runner_stdout,
-                                  stderr=runner_stderr) as docker_exec:
+        return_code: Optional[int] = None
+        timed_out: bool = False
+        with open(os.devnull) as devnull, \
+                tempfile.TemporaryFile() as runner_stdout, \
+                tempfile.TemporaryFile() as runner_stderr, \
+                subprocess.Popen(cmd, stdin=stdin if stdin is not None else devnull,
+                                 stdout=runner_stdout, stderr=runner_stderr,
+                                 start_new_session=True) as docker_exec:
+            try:
+                return_code = docker_exec.wait(timeout=timeout)
+            except subprocess.TimeoutExpired as e:
+                logger.info(
+                    f'Command "{cmd}" in sandbox {self.name} timed out. '
+                    'Will attempt to reap process tree.'
+                )
+                timed_out = True
+                self._reap(cmd_id)
+                os.killpg(os.getpgid(docker_exec.pid), signal.SIGTERM)
+
                 try:
-                    _mocking_hook('raise_timeout', fallback_timeout=fallback_timeout)
-                    docker_exec_return_code = docker_exec.wait(timeout=fallback_timeout)
-                    runner_stdout.seek(0)
+                    docker_exec.communicate(None, timeout=1)
+                except:  # noqa
+                    # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
+                    os.killpg(os.getpgid(docker_exec.pid), signal.SIGKILL)
 
-                    if docker_exec_return_code != 0:
-                        logger.error(
-                            f'docker exec command exited with status {docker_exec_return_code}')
-                        self._raise_sandbox_command_error(
-                            stdout=runner_stdout, stderr=runner_stderr)
+            stdout_len = runner_stdout.tell()
+            if truncate_stdout is not None and runner_stdout.tell() > truncate_stdout:
+                stdout_len = truncate_stdout
+                stdout_truncated = True
+            else:
+                stdout_truncated = False
 
-                    json_len = int(runner_stdout.readline().decode().rstrip())
-                    results_json = json.loads(runner_stdout.read(json_len).decode())
+            stderr_len = runner_stderr.tell()
+            if truncate_stderr is not None and runner_stderr.tell() > truncate_stderr:
+                stderr_len = truncate_stderr
+                stderr_truncated = True
+            else:
+                stderr_truncated = False
 
-                    stdout_len = int(runner_stdout.readline().decode().rstrip())
-                    stdout = tempfile.NamedTemporaryFile()
-                    for chunk in _chunked_read(runner_stdout, stdout_len):
-                        stdout.write(chunk)
-                    stdout.seek(0)
+            # IMPORTANT: These calls to .seek(0) must happen *after*
+            # calling .tell() on these files.
+            runner_stdout.seek(0)
+            runner_stderr.seek(0)
 
-                    stderr_len = int(runner_stdout.readline().decode().rstrip())
-                    stderr = tempfile.NamedTemporaryFile()
-                    for chunk in _chunked_read(runner_stdout, stderr_len):
-                        stderr.write(chunk)
-                    stderr.seek(0)
+            stdout = tempfile.NamedTemporaryFile()
+            for chunk in _chunked_read(runner_stdout, stdout_len):
+                stdout.write(chunk)
+            stdout.seek(0)
 
-                    result = CompletedCommand(return_code=results_json['return_code'],
-                                              timed_out=results_json['timed_out'],
-                                              stdout=stdout,
-                                              stderr=stderr,
-                                              stdout_truncated=results_json['stdout_truncated'],
-                                              stderr_truncated=results_json['stderr_truncated'])
+            # stderr_len = int(runner_stdout.readline().decode().rstrip())
+            stderr = tempfile.NamedTemporaryFile()
+            for chunk in _chunked_read(runner_stderr, stderr_len):
+                stderr.write(chunk)
+            stderr.seek(0)
 
-                    if (result.return_code != 0 or results_json['timed_out']) and check:
-                        self._raise_sandbox_command_error(
-                            stdout=runner_stdout, stderr=runner_stderr)
+            result = CompletedCommand(
+                return_code=return_code,
+                timed_out=timed_out,
+                stdout=stdout,
+                stderr=stderr,
+                stdout_truncated=stdout_truncated,
+                stderr_truncated=stderr_truncated)
 
-                    return result
-                except subprocess.TimeoutExpired as e:
-                    logger.info(
-                        f'Command "{cmd}" in sandbox {self.name} exceeeded the fallback timeout. '
-                        'Will attempt to reap process tree.'
-                    )
-                    self._reap(cmd_id)
+            if check and result.return_code != 0:
+                raise SandboxCommandError(cmd=args, result=result)
 
-                    stdout_len = runner_stdout.tell()
-                    runner_stdout.seek(0)
-                    stdout = tempfile.NamedTemporaryFile()
-                    for chunk in _chunked_read(runner_stdout, stdout_len):
-                        stdout.write(chunk)
-                    stdout.seek(0)
-
-                    stderr_len = runner_stderr.tell()
-                    runner_stderr.seek(0)
-                    stderr = tempfile.NamedTemporaryFile()
-                    stderr.write(
-                        b'The command exceeded the fallback timeout. '
-                        b'This can sometimes happen when subprocesses several levels '
-                        b"down use a lot of memory and aren't stopped properly by . "
-                        b'the parent process. '
-                        b'If this occurs frequently, contact your system administrator.\n')
-                    for chunk in _chunked_read(runner_stderr, stderr_len):
-                        stderr.write(chunk)
-                    stderr.seek(0)
-
-                    return CompletedCommand(
-                        return_code=None,
-                        timed_out=True,
-                        stdout=stdout,
-                        stderr=stderr,
-                        stdout_truncated=False,
-                        stderr_truncated=True,
-                    )
-
-    def _raise_sandbox_command_error(
-        self, *,
-        stdout: IO[bytes],
-        stderr: IO[bytes],
-        original_error: Optional[Exception] = None
-    ) -> NoReturn:
-        stdout.seek(0)
-        stderr.seek(0)
-        new_error = SandboxCommandError(
-            stdout.read().decode('utf-8', 'surrogateescape')
-            + '\n'
-            + stderr.read().decode('utf-8', 'surrogateescape')
-        )
-
-        if original_error is not None:
-            raise new_error from original_error
-        else:
-            raise new_error
+            return result
 
     def add_files(
         self, *filenames: str,
@@ -635,6 +670,32 @@ class AutograderSandbox:
         self.run_command(chown_cmd, as_root=True)
 
 
+# A convenience function that calls subprocess.run with the given timeout,
+# checks the return code (by passing check=True), and captures the output.
+# If the command fails, logs error_msg_prefix and the stdout and stderr
+# of the command.
+def _subprocess_helper(
+    cmd: List[str], *, timeout: Optional[int], error_msg_prefix: str
+) -> 'subprocess.CompletedProcess[str]':
+    try:
+        return subprocess.run(
+            cmd,
+            timeout=timeout,
+            check=True,
+            capture_output=True,
+            encoding='utf-8',
+            errors='surrogateescape'
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        logger.error(
+            error_msg_prefix,
+            str(e),
+            f'Stdout:\n{e.stdout}\n',
+            f'Stderr:\n{e.stderr}\n'
+        )
+        raise
+
+
 # Generator that reads amount_to_read bytes from file_obj, yielding
 # one chunk at a time.
 def _chunked_read(
@@ -649,34 +710,6 @@ def _chunked_read(
     remainder = amount_to_read % chunk_size
     if remainder:
         yield file_obj.read(remainder)
-
-
-class CompletedCommand:
-    def __init__(
-        self, return_code: Optional[int],
-        stdout: IO[bytes],
-        stderr: IO[bytes],
-        timed_out: bool,
-        stdout_truncated: bool,
-        stderr_truncated: bool
-    ):
-        """
-        :param return_code: The return code of the command,
-            or None if the command timed out.
-        :param stdout: A file object containing the
-            stdout content of the command.
-        :param stderr: A file object containing the
-            stderr content of the command.
-        :param timed_out: Whether the command exceeded the time limit.
-        :param stdout_truncated: Whether stdout was truncated.
-        :param stderr_truncated: Whether stderr was truncated.
-        """
-        self.return_code = return_code
-        self.stdout = stdout
-        self.stderr = stderr
-        self.timed_out = timed_out
-        self.stdout_truncated = stdout_truncated
-        self.stderr_truncated = stderr_truncated
 
 
 def _find_process(search_for: str) -> Optional[psutil.Process]:
@@ -711,6 +744,8 @@ def _kill_proc_descendents(parent: psutil.Process) -> None:
     except psutil.NoSuchProcess:
         return
 
+    logger.debug(f'Children {children}')  # FIXME
+    logger.debug('Sending SIGTERM to children')
     for p in children:
         try:
             logger.debug(f'Sending SIGTERM to {p.cmdline()} (pid={p.pid})')
@@ -718,7 +753,9 @@ def _kill_proc_descendents(parent: psutil.Process) -> None:
         except psutil.NoSuchProcess:
             pass
 
+    logger.debug('Waiting for terminated procs')
     gone, alive = psutil.wait_procs(children, timeout=3)
+    logger.debug('Sending SIGKILL to remaining children')
     for p in alive:
         try:
             logger.debug(f'Sending SIGKILL to {p.cmdline()} (pid={p.pid})')

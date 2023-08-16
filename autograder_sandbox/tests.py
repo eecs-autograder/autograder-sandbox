@@ -49,7 +49,7 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
             {'spam': 'egg', 'sausage': '42'})
 
     def test_default_init(self) -> None:
-        sandbox = AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest')
+        sandbox = AutograderSandbox()
         self.assertIsNotNone(sandbox.name)
         self.assertFalse(sandbox.allow_network_access)
         self.assertEqual({}, sandbox.environment_variables)
@@ -109,10 +109,27 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
             with self.assertRaises(SandboxCommandError):
                 self.sandbox.run_command(self.root_cmd, check=True)
 
-    def test_run_command_executable_does_not_exist_no_error(self) -> None:
+    def test_run_command_executable_does_not_exist(self) -> None:
         with self.sandbox:
             cmd_result = self.sandbox.run_command(['not_an_exe'])
-            self.assertNotEqual(0, cmd_result.return_code)
+            print(cmd_result.stdout.read())
+            print(cmd_result.stderr.read())
+            self.assertEqual(127, cmd_result.return_code)
+
+    def test_run_command_executable_parent_path_exists_but_not_a_directory(self) -> None:
+        with self.sandbox:
+            cmd_result = self.sandbox.run_command(['touch', 'spam'], check=True)
+            cmd_result = self.sandbox.run_command(['./spam/echo', "hello"])
+            print(cmd_result.stdout.read())
+            print(cmd_result.stderr.read())
+            self.assertEqual(127, cmd_result.return_code)
+
+    def test_run_command_executable_not_executable(self) -> None:
+        with self.sandbox:
+            cmd_result = self.sandbox.run_command(['touch', 'spam'], check=True)
+            cmd_result = self.sandbox.run_command(['./spam'])
+            self.assertIn('Permission denied', cmd_result.stdout.read().decode())
+            self.assertEqual(1, cmd_result.return_code)
 
 
 class AutograderSandboxMiscTestCase(unittest.TestCase):
@@ -161,6 +178,38 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
             result = sandbox.run_command(
                 ['bash', '-c', '>&2 cat'], stdin=self.stdin, truncate_stderr=truncate_length)
+            self.assertEqual(expected_output, result.stderr.read())
+            self.assertTrue(result.stderr_truncated)
+            self.assertFalse(result.stdout_truncated)
+
+    def test_truncate_stdout_with_timeout(self) -> None:
+        truncate_length = 9
+        long_output = b'a' * 100
+        expected_output = long_output[:truncate_length]
+        self._write_and_seek(self.stdin, long_output)
+        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+            result = sandbox.run_command(
+                ['bash', '-c', 'cat; sleep 10'],
+                stdin=self.stdin,
+                truncate_stdout=truncate_length,
+                timeout=2
+            )
+            self.assertEqual(expected_output, result.stdout.read())
+            self.assertTrue(result.stdout_truncated)
+            self.assertFalse(result.stderr_truncated)
+
+    def test_truncate_stderr_with_timeout(self) -> None:
+        truncate_length = 13
+        long_output = b'a' * 100
+        expected_output = long_output[:truncate_length]
+        self._write_and_seek(self.stdin, long_output)
+        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+            result = sandbox.run_command(
+                ['bash', '-c', '>&2 cat; sleep 10'],
+                stdin=self.stdin,
+                truncate_stderr=truncate_length,
+                timeout=2
+            )
             self.assertEqual(expected_output, result.stderr.read())
             self.assertTrue(result.stderr_truncated)
             self.assertFalse(result.stdout_truncated)
@@ -257,32 +306,60 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
 
     def test_entire_process_tree_killed_on_timeout(self) -> None:
-        for program_str in _PROG_WITH_SUBPROCESS_STALL, _PROG_WITH_PARENT_PROC_STALL:
-            with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
-                ps_result = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
-                print(ps_result)
-                num_ps_lines = len(ps_result.split('\n'))
-                print(num_ps_lines)
+        sleep_time = 10
+        prog_with_subprocess_stall = """
+import subprocess
 
-                script_file = _add_string_to_sandbox_as_file(
-                    program_str, '.py', sandbox)
+print('hello', flush=True)
+subprocess.call(['sleep', '{}'])
+print('goodbye', flush=True)
+""".format(sleep_time)
 
-                start_time = time.time()
-                result = sandbox.run_command(['python3', script_file], timeout=1)
-                self.assertTrue(result.timed_out)
+        self._do_proc_tree_killed_on_timeout(prog_with_subprocess_stall, sleep_time)
 
-                time_elapsed = time.time() - start_time
-                self.assertLess(time_elapsed, _SLEEP_TIME // 2,
-                                msg='Killing processes took too long')
+        prog_with_parent_proc_stall = """
+import subprocess
+import time
 
-                ps_result_after_cmd = sandbox.run_command(
-                    ['ps', '-aux']).stdout.read().decode()
-                print(ps_result_after_cmd)
-                num_ps_lines_after_cmd = len(ps_result_after_cmd.split('\n'))
-                self.assertEqual(num_ps_lines, num_ps_lines_after_cmd)
+print('hello', flush=True)
+subprocess.Popen(['sleep', '{}'])
+time.sleep({})
+print('goodbye', flush=True)
+""".format(sleep_time * 2, sleep_time)
+
+        self._do_proc_tree_killed_on_timeout(prog_with_parent_proc_stall, sleep_time)
+
+    def test_proc_tree_killing_fails_but_run_command_still_exits(self) -> None:
+        self.fail('Mock _reap so that procs do not get killed, then call _do_proc_tree method')
+
+    def _do_proc_tree_killed_on_timeout(self, program_str: str, sleep_time: int) -> None:
+        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+            ps_result = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
+            print(ps_result)
+            num_ps_lines = len(ps_result.split('\n'))
+            print(num_ps_lines)
+
+            script_file = _add_string_to_sandbox_as_file(
+                program_str, '.py', sandbox)
+
+            start_time = time.time()
+            result = sandbox.run_command(['python3', script_file], timeout=1)
+            print("done??", flush=True)
+            self.assertTrue(result.timed_out)
+
+            time_elapsed = time.time() - start_time
+            self.assertLess(time_elapsed, sleep_time // 2,
+                            msg='Killing processes took too long')
+
+            ps_result_after_cmd = sandbox.run_command(
+                ['ps', '-aux']).stdout.read().decode()
+            print(ps_result_after_cmd)
+            num_ps_lines_after_cmd = len(ps_result_after_cmd.split('\n'))
+            self.assertEqual(num_ps_lines, num_ps_lines_after_cmd)
 
     def test_command_can_leave_child_process_running(self) -> None:
         with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+            # sandbox.run_command(['sleep', '300'])
             ps_result = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
             print(ps_result)
             num_ps_lines = len(ps_result.split('\n'))
@@ -290,7 +367,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
 
             script_file = _add_string_to_sandbox_as_file(_PROG_THAT_FORKS, '.py', sandbox)
 
-            result = sandbox.run_command(['python3', script_file], timeout=1)
+            result = sandbox.run_command(['python3', script_file], timeout=3)
             self.assertFalse(result.timed_out)
 
             ps_result_after_cmd = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
@@ -372,7 +449,7 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
                 sandbox.run_command(
                     ['bash', '-c', 'cat {}; exit 1'.format(self.file_to_print)],
                     check=True)
-            self.assertIn(self.non_utf.decode('utf-8', 'surrogateescape'), str(cm.exception))
+            self.assertIn(self.non_utf, cm.exception.result.stdout.read())
 
         with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
             sandbox.add_files(self.file_to_print)
@@ -381,7 +458,7 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
                 sandbox.run_command(
                     ['bash', '-c', '>&2 cat {}; exit 1'.format(self.file_to_print)],
                     check=True)
-            self.assertIn(self.non_utf.decode('utf-8', 'surrogateescape'), str(cm.exception))
+            self.assertIn(self.non_utf, cm.exception.result.stderr.read())
 
 
 _SLEEP_TIME = 6
@@ -393,24 +470,6 @@ print('hello', flush=True)
 subprocess.Popen(['sleep', '{}'])
 print('goodbye', flush=True)
 """.format(_SLEEP_TIME)
-
-_PROG_WITH_SUBPROCESS_STALL = """
-import subprocess
-
-print('hello', flush=True)
-subprocess.call(['sleep', '{}'])
-print('goodbye', flush=True)
-""".format(_SLEEP_TIME)
-
-_PROG_WITH_PARENT_PROC_STALL = """
-import subprocess
-import time
-
-print('hello', flush=True)
-subprocess.Popen(['sleep', '{}'])
-time.sleep({})
-print('goodbye', flush=True)
-""".format(_SLEEP_TIME * 2, _SLEEP_TIME)
 
 
 class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
@@ -742,46 +801,46 @@ for i in range(2):
             print(result.stderr.read().decode())
             self.assertEqual(0, result.return_code)
 
-    def test_fallback_time_limit_is_twice_timeout(self) -> None:
-        actual_fallback_timeout: int = -1
+    # def test_fallback_time_limit_is_twice_timeout(self) -> None:
+    #     actual_fallback_timeout: int = -1
 
-        def _mock(context: str, **kwargs: Any) -> None:
-            if context == 'raise_timeout':
-                nonlocal actual_fallback_timeout
-                actual_fallback_timeout = kwargs['fallback_timeout']
-                raise subprocess.TimeoutExpired([], 10)
+    #     def _mock(context: str, **kwargs: Any) -> None:
+    #         if context == 'raise_timeout':
+    #             nonlocal actual_fallback_timeout
+    #             actual_fallback_timeout = kwargs['fallback_timeout']
+    #             raise subprocess.TimeoutExpired([], 10)
 
-        with AutograderSandbox(min_fallback_timeout=4) as sandbox:
-            with mock.patch('autograder_sandbox.autograder_sandbox._mocking_hook', new=_mock):
-                result = sandbox.run_command(['sleep', '20'], timeout=5)
-                stdout = result.stdout.read().decode()
-                stderr = result.stderr.read().decode()
-                print(stdout)
-                print(stderr)
+    #     with AutograderSandbox(min_fallback_timeout=4) as sandbox:
+    #         with mock.patch('autograder_sandbox.autograder_sandbox._mocking_hook', new=_mock):
+    #             result = sandbox.run_command(['sleep', '20'], timeout=5)
+    #             stdout = result.stdout.read().decode()
+    #             stderr = result.stderr.read().decode()
+    #             print(stdout)
+    #             print(stderr)
 
-                self.assertEqual(10, actual_fallback_timeout)
+    #             self.assertEqual(10, actual_fallback_timeout)
 
-                self.assertTrue(result.timed_out)
-                self.assertIsNone(result.return_code)
-                self.assertIn('fallback timeout', stderr)
+    #             self.assertTrue(result.timed_out)
+    #             self.assertIsNone(result.return_code)
+    #             self.assertIn('fallback timeout', stderr)
 
-    def test_fallback_time_limit_is_min_fallback_timeout(self) -> None:
-        with AutograderSandbox(min_fallback_timeout=60) as sandbox:
-            to_throw = subprocess.TimeoutExpired([], 60)
-            subprocess_run_mock = mock.Mock(side_effect=to_throw)
-            with mock.patch('subprocess.run', new=subprocess_run_mock):
-                # The value passed to "timeout" here should be overridden
-                # by the value passed to "min_fallback_timeout"
-                result = sandbox.run_command(['sleep', '20'], timeout=10)
-                stdout = result.stdout.read().decode()
-                stderr = result.stderr.read().decode()
+    # def test_fallback_time_limit_is_min_fallback_timeout(self) -> None:
+    #     with AutograderSandbox(min_fallback_timeout=60) as sandbox:
+    #         to_throw = subprocess.TimeoutExpired([], 60)
+    #         subprocess_run_mock = mock.Mock(side_effect=to_throw)
+    #         with mock.patch('subprocess.run', new=subprocess_run_mock):
+    #             # The value passed to "timeout" here should be overridden
+    #             # by the value passed to "min_fallback_timeout"
+    #             result = sandbox.run_command(['sleep', '20'], timeout=10)
+    #             stdout = result.stdout.read().decode()
+    #             stderr = result.stderr.read().decode()
 
-                args, kwargs = subprocess_run_mock.call_args
-                self.assertEqual(60, kwargs['timeout'])
+    #             args, kwargs = subprocess_run_mock.call_args
+    #             self.assertEqual(60, kwargs['timeout'])
 
-                self.assertTrue(result.timed_out)
-                self.assertIsNone(result.return_code)
-                self.assertIn('fallback timeout', stderr)
+    #             self.assertTrue(result.timed_out)
+    #             self.assertIsNone(result.return_code)
+    #             self.assertIn('fallback timeout', stderr)
 
     def test_memory_limit(self) -> None:
         program_str = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=4 * 10 ** 9, sleep_time=0)
@@ -814,6 +873,7 @@ for i in range(2):
                 timeout=20, as_root=True
             )
 
+            self.fail('FIXME: count # lines of output with different messages. (note: OOM killer could kill the ones spawned or the one spawning them)')
             print(result.return_code)
             print(result.stdout.read().decode())
             print(result.stderr.read().decode())

@@ -3,14 +3,14 @@
 import os
 import sys
 import subprocess
-import signal
+# import signal
 import pwd
 import argparse
 import resource
-import json
-import tempfile
-import uuid
-import shutil
+# import json
+# import tempfile
+# import uuid
+# import shutil
 import grp
 
 
@@ -50,81 +50,99 @@ def main():
 
         except Exception:
             import traceback
-            traceback.print_exc()
+            print('Internal AutograderSandbox error while setting up command', file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
             raise
 
-    timed_out = False
-    return_code = None
-    stdin = subprocess.DEVNULL if args.stdin_devnull else None
-    # IMPORTANT: We want to use NamedTemporaryFile here rather than TemporaryFile
-    # so that we can determine output size with os.path.size(). In some cases,
-    # notably when valgrind produces a core dump, file.tell() produces a value
-    # that is too large, which then causes an error.
-    with tempfile.NamedTemporaryFile() as stdout, tempfile.NamedTemporaryFile() as stderr:
-        # Adopted from https://github.com/python/cpython/blob/3.5/Lib/subprocess.py#L378
-        env_copy = os.environ.copy()
-        if not args.as_root:
-            record = pwd.getpwnam('autograder')
-            env_copy['HOME'] = record.pw_dir
-            env_copy['USER'] = record.pw_name
-            env_copy['LOGNAME'] = record.pw_name
-        try:
-            with subprocess.Popen(args.cmd_args,
-                                  stdin=stdin,
-                                  stdout=stdout,
-                                  stderr=stderr,
-                                  preexec_fn=set_subprocess_rlimits,
-                                  start_new_session=True,
-                                  env=env_copy) as process:
-                try:
-                    process.communicate(None, timeout=args.timeout)
-                    return_code = process.poll()
-                except subprocess.TimeoutExpired:
-                    # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                    process.wait()
-                    timed_out = True
-                except:  # noqa
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                    process.wait()
-                    raise
+    # timed_out = False
+    # return_code = None
+    # stdin = subprocess.DEVNULL if args.stdin_devnull else None
+    # # IMPORTANT: We want to use NamedTemporaryFile here rather than TemporaryFile
+    # # so that we can determine output size with os.path.size(). In some cases,
+    # # notably when valgrind produces a core dump, file.tell() produces a value
+    # # that is too large, which then causes an error.
+    # # with tempfile.NamedTemporaryFile() as stdout, tempfile.NamedTemporaryFile() as stderr:
+    # # Adopted from https://github.com/python/cpython/blob/3.5/Lib/subprocess.py#L378
+    env_copy = os.environ.copy()
+    if not args.as_root:
+        record = pwd.getpwnam('autograder')
+        env_copy['HOME'] = record.pw_dir
+        env_copy['USER'] = record.pw_name
+        env_copy['LOGNAME'] = record.pw_name
 
-        except FileNotFoundError:
-            # This is the value returned by /bin/sh when an executable could
-            # not be found.
-            return_code = 127
+    try:
+        result = subprocess.run(
+            args.cmd_args,
+            env=env_copy,
+            start_new_session=False,
+            preexec_fn=set_subprocess_rlimits
+        )
+        sys.exit(result.returncode)
+        # os.execvpe(args.cmd_args[0], args.cmd_args, env_copy)
+    except (FileNotFoundError, NotADirectoryError) as e:
+        print('Command "{}" not found'.format(args.cmd_args[0]))
+        sys.exit(127)
+    except PermissionError as e:
+        print('Permission denied: Command "{}" not executable'.format(args.cmd_args[0]))
+        sys.exit(1)
 
-        stdout_len = os.path.getsize(stdout.name)
-        stdout_truncated = (
-            args.truncate_stdout is not None and stdout_len > args.truncate_stdout)
-        stderr_len = os.path.getsize(stderr.name)
-        stderr_truncated = (
-            args.truncate_stderr is not None and stderr_len > args.truncate_stderr)
-        results = {
-            'cmd_args': args.cmd_args,
-            'return_code': return_code,
-            'timed_out': timed_out,
-            'stdout_truncated': stdout_truncated,
-            'stderr_truncated': stderr_truncated,
-        }
+    # try:
+    #     with subprocess.Popen(args.cmd_args,
+    #                           stdin=stdin,
+    #                           stdout=stdout,
+    #                           stderr=stderr,
+    #                           preexec_fn=set_subprocess_rlimits,
+    #                           start_new_session=True,
+    #                           env=env_copy) as process:
+    #         try:
+    #             process.communicate(None, timeout=args.timeout)
+    #             return_code = process.poll()
+    #         except subprocess.TimeoutExpired:
+    #             # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
+    #             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    #             process.wait()
+    #             timed_out = True
+    #         except:  # noqa
+    #             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    #             process.wait()
+    #             raise
 
-        json_data = json.dumps(results)
-        print(len(json_data), flush=True)
-        print(json_data, end='', flush=True)
+    # except FileNotFoundError:
+    #     # This is the value returned by /bin/sh when an executable could
+    #     # not be found.
+    #     return_code = 127
 
-        truncated_stdout_len = args.truncate_stdout if stdout_truncated else stdout_len
-        print(truncated_stdout_len, flush=True)
-        stdout.seek(0)
-        for chunk in _chunked_read(stdout, truncated_stdout_len):
-            sys.stdout.buffer.write(chunk)
-            sys.stdout.flush()
+    # stdout_len = os.path.getsize(stdout.name)
+    # stdout_truncated = (
+    #     args.truncate_stdout is not None and stdout_len > args.truncate_stdout)
+    # stderr_len = os.path.getsize(stderr.name)
+    # stderr_truncated = (
+    #     args.truncate_stderr is not None and stderr_len > args.truncate_stderr)
+    # results = {
+    #     'cmd_args': args.cmd_args,
+    #     'return_code': return_code,
+    #     'timed_out': timed_out,
+    #     'stdout_truncated': stdout_truncated,
+    #     'stderr_truncated': stderr_truncated,
+    # }
 
-        truncated_stderr_len = args.truncate_stderr if stderr_truncated else stderr_len
-        print(stderr_len, flush=True)
-        stderr.seek(0)
-        for chunk in _chunked_read(stderr, truncated_stderr_len):
-            sys.stdout.buffer.write(chunk)
-            sys.stdout.flush()
+    # json_data = json.dumps(results)
+    # print(len(json_data), flush=True)
+    # print(json_data, end='', flush=True)
+
+    # truncated_stdout_len = args.truncate_stdout if stdout_truncated else stdout_len
+    # print(truncated_stdout_len, flush=True)
+    # stdout.seek(0)
+    # for chunk in _chunked_read(stdout, truncated_stdout_len):
+    #     sys.stdout.buffer.write(chunk)
+    #     sys.stdout.flush()
+
+    # truncated_stderr_len = args.truncate_stderr if stderr_truncated else stderr_len
+    # print(stderr_len, flush=True)
+    # stderr.seek(0)
+    # for chunk in _chunked_read(stderr, truncated_stderr_len):
+    #     sys.stdout.buffer.write(chunk)
+    #     sys.stdout.flush()
 
 
 def parse_args():
@@ -147,16 +165,16 @@ def parse_args():
     return parser.parse_args()
 
 
-# Generator that reads amount_to_read bytes from file_obj, yielding
-# one chunk at a time.
-def _chunked_read(file_obj, amount_to_read, chunk_size=1024 * 16):
-    num_reads = amount_to_read // chunk_size
-    for i in range(num_reads):
-        yield file_obj.read(chunk_size)
+# # Generator that reads amount_to_read bytes from file_obj, yielding
+# # one chunk at a time.
+# def _chunked_read(file_obj, amount_to_read, chunk_size=1024 * 16):
+#     num_reads = amount_to_read // chunk_size
+#     for i in range(num_reads):
+#         yield file_obj.read(chunk_size)
 
-    remainder = amount_to_read % chunk_size
-    if remainder:
-        yield file_obj.read(remainder)
+#     remainder = amount_to_read % chunk_size
+#     if remainder:
+#         yield file_obj.read(remainder)
 
 
 if __name__ == '__main__':
