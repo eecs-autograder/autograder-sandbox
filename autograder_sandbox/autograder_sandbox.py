@@ -1,5 +1,4 @@
-from typing import Any, Union
-import json
+from typing import Any
 import os
 import signal
 import subprocess
@@ -8,7 +7,7 @@ import tempfile
 import traceback
 import uuid
 from decimal import Decimal
-from typing import (IO, AnyStr, Iterator, List, Mapping, NoReturn, Optional, Sequence)
+from typing import (IO, AnyStr, Iterator, List, Mapping, Optional, Sequence)
 import logging
 
 import psutil
@@ -23,7 +22,6 @@ SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'eecsautograder/ub
 
 SANDBOX_PIDS_LIMIT = int(os.environ.get('SANDBOX_PIDS_LIMIT', 512))
 SANDBOX_MEM_LIMIT = os.environ.get('SANDBOX_MEM_LIMIT', '4g')
-SANDBOX_MIN_FALLBACK_TIMEOUT = int(os.environ.get('SANDBOX_MIN_FALLBACK_TIMEOUT', 60))
 SANDBOX_CPU_CORE_LIMIT = (
     Decimal(val) if (val := os.environ.get('SANDBOX_CPU_CORE_LIMIT')) is not None else None
 )
@@ -110,13 +108,13 @@ class AutograderSandbox:
                  docker_image: str = SANDBOX_DOCKER_IMAGE,
                  allow_network_access: bool = False,
                  environment_variables: Optional[Mapping[str, str]] = None,
-                 container_create_timeout: Optional[int] = None,
                  pids_limit: int = SANDBOX_PIDS_LIMIT,
                  memory_limit: str = SANDBOX_MEM_LIMIT,
-                 oom_kill_disable: bool = False,
-                 min_fallback_timeout: int = SANDBOX_MIN_FALLBACK_TIMEOUT,
                  cpu_core_limit: Optional[Decimal] = SANDBOX_CPU_CORE_LIMIT,
-                 debug: bool = False):
+                 container_create_timeout: Optional[int] = None,
+                 container_setup_timeout: Optional[int] = None,
+                 process_reap_timeout: Optional[int] = 60,
+                 container_teardown_timeout: Optional[int] = 10):
         """
         :param name: A human-readable name that can be used to identify
             this sandbox instance. This value must be unique across all
@@ -140,11 +138,6 @@ class AutograderSandbox:
             value) pairs that should be set as environment variables
             inside the sandbox.
 
-        :param container_create_timeout: A time limit to be placed on
-            creating the underlying Docker container for this sandbox.
-            If the time limit is exceeded, subprocess.CalledProcessError
-            will be raised. A value of None indicates no time limit.
-
         :param pids_limit: Passed to "docker create" with the
             --pids-limit flag. This will limit the number of processes
             that can be created.
@@ -163,8 +156,9 @@ class AutograderSandbox:
             limit the amount of memory that processes running in the
             sandbox can use.
 
-            New in version 6.0.0: The --oom-kill-disable option can be
-            set by setting the new oom_kill_disable parameter to True.
+            New in version 6.0.0: This option no longer passes
+            --oom-kill-disable, as that option is not supported on
+            newer linux kernels with cgroups v2.
 
             In general we recommend setting this value as high as is safe
             for your host machine and additionally using the max_virtual_memory
@@ -176,24 +170,6 @@ class AutograderSandbox:
 
             See https://docs.docker.com/config/containers/resource_constraints/#limit-a-containers-access-to-memory
             for more information.
-
-        :param oom_kill_disable: When True, passes the --oom-kill-disable flag
-            to "docker create". Defaults to False.
-
-            See https://www.kernel.org/doc/Documentation/cgroup-v1/memory.txt and
-            https://docs.docker.com/config/containers/resource_constraints/#limit-a-containers-access-to-memory
-            for more information.
-
-            New in version 6.0.0
-
-        :param min_fallback_timeout: The timeout argument to run_command
-            is primarily enforced by cmd_runner.py. When that argument is
-            not None, a timeout of either twice the timeout argument to
-            run_command or this value, whichever is larger, will be applied
-            to the subprocess call to cmd_runner.py itself.
-
-            The default value for this parameter can be changed by
-            setting the SANDBOX_MIN_FALLBACK_TIMEOUT environment variable.
 
         :param cpu_core_limit: Passed to "docker create" with the --cpus
             argument. This will limit the number of cpu cores that processes
@@ -207,9 +183,45 @@ class AutograderSandbox:
 
             New in version 6.0.0.
 
-        :param debug: Whether to print additional debugging information.
-            Deprecated in version 6.0.0. Messages are now printed using a
-            logger.
+        :param container_create_timeout: A time limit to be placed on
+            creating and starting the underlying Docker container for this sandbox.
+            If the time limit is exceeded, SandboxError
+            will be raised. A value of None indicates no time limit.
+
+            We recommend a high value or None for this time limit since
+            creating a container sometimes requires downloading a new
+            image.
+
+        :param container_setup_timeout: A time limit placed on individual
+            steps of starting and setting up the container
+            (e.g. adding the cmd_runner.py script to the container).
+            If the time limit is exceeded, SandboxError
+            will be raised. A value of None indicates no time limit.
+
+            New in 6.0.0
+
+        :param process_reap_timeout: A time limit placed on reaping a process
+            tree after a command times out or when stopping a container times
+            out.
+            If the time limit is exceeded, SandboxError
+            will be raised. A value of None indicates no time limit.
+
+            New in 6.0.0
+
+        :param container_teardown_timeout: A time limit placed on stopping
+            and destroying the container.
+            If the time limit is exceeded while stopping the container,
+            the sandbox will try reaping processes in the container
+            and retrying stopping the container. If the container
+            does not stop then, CriticalSandboxError is raised.
+
+            If the container is stopped but removing it fails,
+            SandboxNotDestroyed is raised.
+
+            A value of None indicates no time limit, but this is
+            NOT RECOMMENDED.
+
+            New in 6.0.0
         """
         # Used for reliably finding the container's main process.
         self._unique_id = f'sandbox-{uuid.uuid4().hex}'
@@ -227,10 +239,11 @@ class AutograderSandbox:
         self._container_create_timeout = container_create_timeout
         self._pids_limit = pids_limit
         self._memory_limit = memory_limit
-        self._oom_kill_disable = oom_kill_disable
-        self._min_fallback_timeout = min_fallback_timeout
         self._cpu_core_limit = cpu_core_limit
-        self.debug = debug
+
+        self._container_setup_timeout = container_setup_timeout
+        self._process_reap_timeout = process_reap_timeout
+        self._container_teardown_timeout = container_teardown_timeout
 
     def __enter__(self) -> 'AutograderSandbox':
         self._create_and_start()
@@ -270,8 +283,6 @@ class AutograderSandbox:
             '--memory', self._memory_limit,
             '--memory-swap', self._memory_limit,
         ]
-        if self._oom_kill_disable:
-            create_args.append('--oom-kill-disable')
 
         if self._cpu_core_limit is not None:
             create_args += ['--cpus', str(self._cpu_core_limit)]
@@ -315,7 +326,7 @@ class AutograderSandbox:
                     'docker', 'cp',
                     main_proc_script_file.name, f'{self.name}:{self._main_process_script}'
                 ],
-                timeout=60,
+                timeout=self._container_setup_timeout,
                 error_msg_prefix=f'Error adding entrypoint script to container {self.name}\n'
             )
 
@@ -334,12 +345,12 @@ class AutograderSandbox:
             )
             _subprocess_helper(
                 ['docker', 'cp', cmd_runner_source, '{}:{}'.format(self.name, CMD_RUNNER_PATH)],
-                timeout=60,
+                timeout=self._container_setup_timeout,
                 error_msg_prefix=f'Error adding cmd_runner.py to container {self.name}\n'
             )
             _subprocess_helper(
                 ['docker', 'exec', '-i', self.name, 'chmod', '555', CMD_RUNNER_PATH],
-                timeout=60,
+                timeout=self._container_setup_timeout,
                 error_msg_prefix=(
                     f'Error setting cmd_runner.py permissions in container {self.name}\n'
                 )
@@ -363,7 +374,7 @@ class AutograderSandbox:
         try:
             _subprocess_helper(
                 ['docker', 'rm', '-f', self.name],
-                timeout=15,
+                timeout=self._container_teardown_timeout,
                 error_msg_prefix=f'Error destroying container {self.name}'
             )
             self._is_running = False
@@ -378,7 +389,7 @@ class AutograderSandbox:
         try:
             _subprocess_helper(
                 ['docker', 'stop', '--time', '5', self.name],
-                timeout=10,
+                timeout=self._container_teardown_timeout,
                 error_msg_prefix=f'Error stopping container {self.name}'
             )
             self._is_running = False
@@ -386,8 +397,8 @@ class AutograderSandbox:
             try:
                 self._reap(self._main_process_script)
                 _subprocess_helper(
-                    ['docker', 'stop', self.name],
-                    timeout=15,
+                    ['docker', 'stop', '--time', '2', self.name],
+                    timeout=self._container_teardown_timeout,
                     error_msg_prefix=(
                         f'Error stopping container {self.name} after reaping proc tree'
                     )
@@ -412,18 +423,12 @@ class AutograderSandbox:
         """
         result = _subprocess_helper(
             ['docker', 'run', '--rm', '--pid', 'host', 'jameslp/autograder-sandbox-reaper:1', search_for],
-            timeout=30,
+            timeout=self._process_reap_timeout,
             error_msg_prefix=f'Error reaping children of {search_for}'
         )
         logger.debug(f'reaper exited with status {result.returncode}')
         logger.debug(result.stdout)
         logger.debug(result.stderr)
-        # try:
-        #     if (parent_proc := _find_process(search_for)) is not None:
-        #         logger.debug(f'Reaping children of {search_for} {parent_proc.cmdline()}')
-        #         _kill_proc_descendents(parent_proc)
-        # except psutil.NoSuchProcess:
-        #     pass
 
     @property
     def name(self) -> str:
@@ -754,7 +759,7 @@ def _kill_proc_descendents(parent: psutil.Process) -> None:
             pass
 
     logger.debug('Waiting for terminated procs')
-    gone, alive = psutil.wait_procs(children, timeout=3)
+    gone, alive = psutil.wait_procs(children, timeout=1)
     logger.debug('Sending SIGKILL to remaining children')
     for p in alive:
         try:

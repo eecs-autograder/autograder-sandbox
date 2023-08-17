@@ -11,7 +11,7 @@ import logging
 import time
 import uuid
 from typing import IO, Callable, TypeVar, Optional
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 
 from .autograder_sandbox import (
     AutograderSandbox,
@@ -128,7 +128,7 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
         with self.sandbox:
             cmd_result = self.sandbox.run_command(['touch', 'spam'], check=True)
             cmd_result = self.sandbox.run_command(['./spam'])
-            self.assertIn('Permission denied', cmd_result.stdout.read().decode())
+            self.assertIn('Permission denied', cmd_result.stderr.read().decode())
             self.assertEqual(1, cmd_result.return_code)
 
 
@@ -384,9 +384,8 @@ print('goodbye', flush=True)
                 sandbox.run_command(['touch', runner_path], check=True)
 
     @mock.patch('subprocess.run')
-    @mock.patch('subprocess.check_call')
     def test_container_create_timeout(self, mock_check_call: mock.Mock, *args: object) -> None:
-        with AutograderSandbox(debug=True):
+        with AutograderSandbox():
             args, kwargs = mock_check_call.call_args
             self.assertIsNone(kwargs['timeout'])
 
@@ -873,18 +872,29 @@ for i in range(2):
                 timeout=20, as_root=True
             )
 
-            self.fail('FIXME: count # lines of output with different messages. (note: OOM killer could kill the ones spawned or the one spawning them)')
-            print(result.return_code)
-            print(result.stdout.read().decode())
-            print(result.stderr.read().decode())
-            self.assertFalse(result.timed_out)
-            self.assertNotEqual(0, result.return_code)
+            msg_counts = Counter(result.stdout.read().decode().splitlines())
+            print(msg_counts)
+            self.assertEqual(100, msg_counts['Allocating an array of 4000000 bytes'])
+            self.assertLess(msg_counts['Sleeping'], 100)
+            self.assertLess(msg_counts['Allocated and filled 4000000 bytes'], 100)
 
-            still_up = sandbox.run_command(['echo', 'still alive'], timeout=5)
-            print(still_up.return_code)
-            print(still_up.stdout.read().decode())
-            print(still_up.stderr.read().decode())
-            self.assertEqual(0, still_up.return_code)
+            # NOTE: At this point, trying to run a new command could result
+            # in that command getting immediately OOM killed.
+            # Testing for specific behaviors is challenging, and we cannot rely
+            # on the OOM behaving in a specific way. Leaving commented-out
+            # code below for reference.
+
+            # print(result.return_code)
+            # print(result.stdout.read().decode())
+            # print(result.stderr.read().decode())
+            # self.assertFalse(result.timed_out)
+            # self.assertNotEqual(0, result.return_code)
+
+            # still_up = sandbox.run_command(['echo', 'still alive'], timeout=5)
+            # print(still_up.return_code)
+            # print(still_up.stdout.read().decode())
+            # print(still_up.stderr.read().decode())
+            # self.assertEqual(0, still_up.return_code)
 
 # -----------------------------------------------------------------------------
 
@@ -1113,6 +1123,14 @@ CMD ["echo", "goodbye"]
             result = sandbox.run_command(['echo', 'hello'])
             self.assertEqual(0, result.return_code)
             self.assertEqual('hello\n', result.stdout.read().decode())
+
+# -----------------------------------------------------------------------------
+
+
+class AutograderSandboxExceptionHandlingTestCase(unittest.TestCase):
+    def test_(self) -> None:
+        self.fail('TODO ADD TESTS')
+
 
 
 if __name__ == '__main__':
