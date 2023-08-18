@@ -896,6 +896,41 @@ for i in range(2):
             # print(still_up.stderr.read().decode())
             # self.assertEqual(0, still_up.return_code)
 
+    def test_memory_limit_with_command_can_leaves_child_process_running(self) -> None:
+        program_str = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=4 * 10 ** 6, sleep_time=5)
+        with AutograderSandbox(memory_limit='256m') as sandbox:
+            filename = _add_string_to_sandbox_as_file(program_str, '.cpp', sandbox)
+            exe_name = _compile_in_sandbox(sandbox, filename)
+            bash_cmd = 'for i in {1..100}; do ./' + exe_name + ' &\n done; sleep 10'
+
+            parent_prog = f"""import subprocess
+
+print('hello', flush=True)
+subprocess.Popen(
+    ['bash', '-c', '''{bash_cmd}''']
+)
+print('goodbye', flush=True)
+            """
+            parent_prog_file_name = _add_string_to_sandbox_as_file(parent_prog, '.py', sandbox)
+
+            result = sandbox.run_command(
+                ['python3', parent_prog_file_name],
+                timeout=20, as_root=True
+            )
+            print(result.return_code)
+            print(result.stdout.read().decode())
+            print(result.stderr.read().decode())
+            self.assertEqual(0, result.return_code)
+
+            print("waiting for spawned processes to finish")
+            time.sleep(15)
+
+            still_up = sandbox.run_command(['echo', 'still alive'], timeout=5)
+            print(still_up.return_code)
+            print(still_up.stdout.read().decode())
+            print(still_up.stderr.read().decode())
+            self.assertEqual(0, still_up.return_code)
+
 # -----------------------------------------------------------------------------
 
 
