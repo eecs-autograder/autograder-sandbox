@@ -703,10 +703,11 @@ int main() {{
 
 
 def _compile_in_sandbox(sandbox: AutograderSandbox, *files_to_compile: str) -> str:
-    exe_name = 'prog'
-    sandbox.run_command(
+    exe_name = 'prog42'
+    compile_result = sandbox.run_command(
         ['g++', '--std=c++11', '-Wall', '-Werror'] + list(files_to_compile)
-        + ['-o', exe_name], check=True)
+        + ['-o', exe_name])
+    assert compile_result.return_code == 0, compile_result.stderr.read().decode()
     return exe_name
 
 
@@ -925,6 +926,69 @@ print('goodbye', flush=True)
             print("waiting for spawned processes to finish")
             time.sleep(15)
 
+            still_up = sandbox.run_command(['echo', 'still alive'], timeout=5)
+            print(still_up.return_code)
+            print(still_up.stdout.read().decode())
+            print(still_up.stderr.read().decode())
+            self.assertEqual(0, still_up.return_code)
+
+    def test_memory_limit_many_small_processes_left_running(self) -> None:
+        _heap_usage_with_pre_sleep_prog_tmpl = """#include <iostream>
+#include <thread>
+#include <cstring>
+#include <fstream>
+
+using namespace std;
+
+const size_t num_bytes_on_heap = {num_bytes_on_heap};
+
+int main() {{
+    while (not ifstream("/sandbox_go_now")) {{
+        this_thread::sleep_for(chrono::seconds(5));
+    }}
+
+    cout << "Allocating an array of " << num_bytes_on_heap << " bytes" << endl;
+    char* heapy = new char[num_bytes_on_heap];
+    for (size_t i = 0; i < num_bytes_on_heap - 1; ++i) {{
+        heapy[i] = 'a';
+    }}
+    heapy[num_bytes_on_heap - 1] = '\\0';
+
+    cout << "Sleeping" << endl;
+    this_thread::sleep_for(chrono::seconds({sleep_time}));
+
+    cout << "Allocated and filled " << strlen(heapy) + 1 << " bytes" << endl;
+    return 0;
+}}
+"""
+
+        program_str = _heap_usage_with_pre_sleep_prog_tmpl.format(
+            num_bytes_on_heap=4 * 10 ** 6, sleep_time=10)
+
+        with AutograderSandbox(memory_limit='256m') as sandbox:
+            filename = _add_string_to_sandbox_as_file(program_str, '.cpp', sandbox)
+            exe_name = _compile_in_sandbox(sandbox, filename)
+
+            parent_prog = f"""import subprocess
+print('hello', flush=True)
+subprocess.Popen(['./{exe_name}'],
+                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print('goodbye', flush=True)
+            """
+
+            parent_prog_filename = _add_string_to_sandbox_as_file(parent_prog, '.py', sandbox)
+
+            for i in range(100):
+                result = sandbox.run_command(
+                    ['python3', parent_prog_filename],
+                    timeout=20, as_root=True
+                )
+                print(result.return_code)
+
+            print('Waking up memory allocating programs')
+            sandbox.run_command(['touch', '/sandbox_go_now'], as_root=True, check=True)
+
+            time.sleep(15)
             still_up = sandbox.run_command(['echo', 'still alive'], timeout=5)
             print(still_up.return_code)
             print(still_up.stdout.read().decode())
