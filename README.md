@@ -5,7 +5,7 @@ Full API documentation can be found at http://autograder-sandbox.readthedocs.io
 
 ## Requirements
 - Python >= 3.8
-- Docker >= 1.13
+- Docker >= 20.10
 
 ## Installation
 1. Install [Docker](https://docs.docker.com/engine/installation/)
