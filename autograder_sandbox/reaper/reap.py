@@ -3,6 +3,7 @@
 """
 Used by the autograder_sandbox libary to reap process trees.
 Not intended for general-purpose use.
+Requires python 3.10 or later.
 """
 
 import argparse
@@ -40,7 +41,7 @@ def _reap(search_for: str) -> None:
         pass
 
 
-def _find_process(search_for: str) -> psutil.Process | None:
+def _find_process(search_for: str) -> 'psutil.Process | None':
     print(f'Searching for process {search_for}', flush=True)
     for p in psutil.process_iter():
         try:

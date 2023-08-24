@@ -7,7 +7,7 @@ import tempfile
 import traceback
 import uuid
 from decimal import Decimal
-from typing import (IO, AnyStr, Iterator, List, Mapping, Optional, Sequence)
+from typing import (IO, AnyStr, Iterator, List, Mapping, Optional, Sequence, Type)
 import logging
 
 import psutil
@@ -114,7 +114,7 @@ class AutograderSandbox:
                  container_create_timeout: Optional[int] = None,
                  container_setup_timeout: Optional[int] = None,
                  process_reap_timeout: Optional[int] = 60,
-                 container_teardown_timeout: Optional[int] = 10):
+                 container_teardown_timeout: Optional[int] = 30):
         """
         :param name: A human-readable name that can be used to identify
             this sandbox instance. This value must be unique across all
@@ -168,7 +168,8 @@ class AutograderSandbox:
             The default value for this parameter can be changed by
             setting the SANDBOX_MEM_LIMIT environment variable.
 
-            See https://docs.docker.com/config/containers/resource_constraints/#limit-a-containers-access-to-memory
+            See https://docs.docker.com/config/containers/resource_constraints/\
+#limit-a-containers-access-to-memory
             for more information.
 
         :param cpu_core_limit: Passed to "docker create" with the --cpus
@@ -313,7 +314,8 @@ class AutograderSandbox:
         _subprocess_helper(
             create_args,
             timeout=self._container_create_timeout,
-            error_msg_prefix=f'Error creating container {self.name}\n'
+            error_msg_prefix=f'Error creating container {self.name}',
+            reraise_as=SandboxError
         )
 
         with tempfile.NamedTemporaryFile() as main_proc_script_file:
@@ -327,13 +329,15 @@ class AutograderSandbox:
                     main_proc_script_file.name, f'{self.name}:{self._main_process_script}'
                 ],
                 timeout=self._container_setup_timeout,
-                error_msg_prefix=f'Error adding entrypoint script to container {self.name}\n'
+                error_msg_prefix=f'Error adding entrypoint script to container {self.name}',
+                reraise_as=SandboxError
             )
 
         _subprocess_helper(
             ['docker', 'start', self.name],
             timeout=self._container_create_timeout,
-            error_msg_prefix=f'Error starting container {self.name}\n'
+            error_msg_prefix=f'Error starting container {self.name}',
+            reraise_as=SandboxError
         )
 
         # Add cmd_runner.py to the container and set its permissions.
@@ -346,14 +350,16 @@ class AutograderSandbox:
             _subprocess_helper(
                 ['docker', 'cp', cmd_runner_source, '{}:{}'.format(self.name, CMD_RUNNER_PATH)],
                 timeout=self._container_setup_timeout,
-                error_msg_prefix=f'Error adding cmd_runner.py to container {self.name}\n'
+                error_msg_prefix=f'Error adding cmd_runner.py to container {self.name}',
+                reraise_as=SandboxError
             )
             _subprocess_helper(
                 ['docker', 'exec', '-i', self.name, 'chmod', '555', CMD_RUNNER_PATH],
                 timeout=self._container_setup_timeout,
                 error_msg_prefix=(
-                    f'Error setting cmd_runner.py permissions in container {self.name}\n'
-                )
+                    f'Error setting cmd_runner.py permissions in container {self.name}'
+                ),
+                reraise_as=SandboxError
             )
         except Exception as e:
             self._destroy()
@@ -362,33 +368,23 @@ class AutograderSandbox:
         self._is_running = True
 
     def _destroy(self) -> None:
-        try:
-            self._stop()
-        except Exception as e:
-            logger.error(str(e))
-            raise CriticalSandboxError from e
+        self._stop()
 
         # Note: Since destroying containers isn't immediately mission-critical
         # in production (the sysadmin can set up a cron job that runs docker
         # prune), we throw SandboxNotDestroyed instead of CriticalSandboxError
-        try:
-            _subprocess_helper(
-                ['docker', 'rm', '-f', self.name],
-                timeout=self._container_teardown_timeout,
-                error_msg_prefix=f'Error destroying container {self.name}'
-            )
-            self._is_running = False
-        except Exception as e:
-            logger.error(
-                'Unexpected error trying to destroy container '
-                f'{self.name}: {e}'
-            )
-            raise SandboxNotDestroyed from e
+        _subprocess_helper(
+            ['docker', 'rm', '-f', self.name],
+            timeout=self._container_teardown_timeout,
+            error_msg_prefix=f'Error destroying container {self.name}',
+            reraise_as=SandboxNotDestroyed
+        )
+        self._is_running = False
 
     def _stop(self) -> None:
         try:
             _subprocess_helper(
-                ['docker', 'stop', '--time', '5', self.name],
+                ['docker', 'stop', '--time', '10', self.name],
                 timeout=self._container_teardown_timeout,
                 error_msg_prefix=f'Error stopping container {self.name}'
             )
@@ -397,7 +393,7 @@ class AutograderSandbox:
             try:
                 self._reap(self._main_process_script)
                 _subprocess_helper(
-                    ['docker', 'stop', '--time', '2', self.name],
+                    ['docker', 'stop', '--time', '5', self.name],
                     timeout=self._container_teardown_timeout,
                     error_msg_prefix=(
                         f'Error stopping container {self.name} after reaping proc tree'
@@ -421,14 +417,23 @@ class AutograderSandbox:
         Finds and kills the process tree whose root is the found process.
         Does not kill the root of the tree.
         """
-        result = _subprocess_helper(
-            ['docker', 'run', '--rm', '--pid', 'host', 'jameslp/autograder-sandbox-reaper:1', search_for],
-            timeout=self._process_reap_timeout,
-            error_msg_prefix=f'Error reaping children of {search_for}'
-        )
-        logger.debug(f'reaper exited with status {result.returncode}')
-        logger.debug(result.stdout)
-        logger.debug(result.stderr)
+        try:
+            result = _subprocess_helper(
+                ['docker', 'run', '--rm', '--pid', 'host',
+                 'jameslp/autograder-sandbox-reaper:1', search_for],
+                timeout=self._process_reap_timeout,
+                error_msg_prefix=f'Error reaping children of {search_for}'
+            )
+            logger.debug(f'reaper exited with status {result.returncode}')
+            logger.debug(result.stdout)
+            logger.debug(result.stderr)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            _mocking_hook('reaping_failed')
+            logger.error(str(e))
+            logger.error(e.stdout)
+            logger.error(e.stderr)
+            # Do NOT reraise an exception here so that reaping failing
+            # for some random reason doesn't derail things.
 
     @property
     def name(self) -> str:
@@ -521,9 +526,6 @@ class AutograderSandbox:
         cmd_id = f'{self._unique_id}_cmd{uuid.uuid4().hex}'
         cmd = ['docker', 'exec', '-i', self.name, CMD_RUNNER_PATH, '--cmd_id', cmd_id]
 
-        # if stdin is None:
-        #     cmd.append('--stdin_devnull')
-
         if block_process_spawn:
             cmd += ['--block_process_spawn']
 
@@ -535,12 +537,6 @@ class AutograderSandbox:
 
         if timeout is not None:
             cmd += ['--timeout', str(timeout)]
-
-        # if truncate_stdout is not None:
-        #     cmd += ['--truncate_stdout', str(truncate_stdout)]
-
-        # if truncate_stderr is not None:
-        #     cmd += ['--truncate_stderr', str(truncate_stderr)]
 
         if as_root:
             cmd += ['--as_root']
@@ -680,7 +676,8 @@ class AutograderSandbox:
 # If the command fails, logs error_msg_prefix and the stdout and stderr
 # of the command.
 def _subprocess_helper(
-    cmd: List[str], *, timeout: Optional[int], error_msg_prefix: str
+    cmd: List[str], *, timeout: Optional[int], error_msg_prefix: str,
+    reraise_as: Optional[Type[Exception]] = None
 ) -> 'subprocess.CompletedProcess[str]':
     try:
         return subprocess.run(
@@ -692,13 +689,32 @@ def _subprocess_helper(
             errors='surrogateescape'
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        logger.error(
-            error_msg_prefix,
-            str(e),
-            f'Stdout:\n{e.stdout}\n',
-            f'Stderr:\n{e.stderr}\n'
+        if e.stdout is None:
+            stdout = ''
+        elif isinstance(e.stdout, bytes):
+            stdout = e.stdout.decode(errors="surrogateescape")
+        else:
+            stdout = e.stdout
+
+        if e.stderr is None:
+            stderr = ''
+        elif isinstance(e.stderr, bytes):
+            stderr = e.stderr.decode(errors="surrogateescape")
+        else:
+            stderr = e.stderr
+
+        error_msg = (
+            error_msg_prefix + '\n'
+            + str(e) + '\n'
+            + f'Stdout:\n{stdout}\n'
+            + f'Stderr:\n{stderr}\n'
         )
-        raise
+
+        logger.debug(error_msg)
+        if reraise_as is not None:
+            raise reraise_as(error_msg) from e
+        else:
+            raise
 
 
 # Generator that reads amount_to_read bytes from file_obj, yielding

@@ -13,10 +13,10 @@ import grp
 SANDBOX_USERNAME = 'autograder'
 
 
-def main():
+def main() -> None:
     args = parse_args()
 
-    def set_subprocess_rlimits():
+    def set_subprocess_rlimits() -> None:
         try:
             if args.as_root:
                 os.setgid(0)
@@ -36,7 +36,7 @@ def main():
             if args.max_virtual_memory is not None:
                 try:
                     resource.setrlimit(
-                        resource.RLIMIT_VMEM,
+                        resource.RLIMIT_VMEM,  # type: ignore
                         (args.max_virtual_memory, args.max_virtual_memory))
                 except Exception:
                     resource.setrlimit(
@@ -75,7 +75,7 @@ def main():
         sys.exit(1)
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--cmd_id",
@@ -93,18 +93,6 @@ def parse_args():
     parser.add_argument("cmd_args", nargs=argparse.REMAINDER)
 
     return parser.parse_args()
-
-
-# # Generator that reads amount_to_read bytes from file_obj, yielding
-# # one chunk at a time.
-# def _chunked_read(file_obj, amount_to_read, chunk_size=1024 * 16):
-#     num_reads = amount_to_read // chunk_size
-#     for i in range(num_reads):
-#         yield file_obj.read(chunk_size)
-
-#     remainder = amount_to_read % chunk_size
-#     if remainder:
-#         yield file_obj.read(remainder)
 
 
 if __name__ == '__main__':

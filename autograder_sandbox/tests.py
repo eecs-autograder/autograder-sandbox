@@ -1,4 +1,3 @@
-from typing import Any
 import sys
 import os
 import unittest
@@ -10,12 +9,15 @@ import itertools
 import logging
 import time
 import uuid
-from typing import IO, Callable, TypeVar, Optional
+from typing import IO, Callable, TypeVar, Optional, List, Any
 from collections import OrderedDict, Counter
 
 from .autograder_sandbox import (
     AutograderSandbox,
     SandboxCommandError,
+    SandboxError,
+    SandboxNotDestroyed,
+    CriticalSandboxError,
     SANDBOX_USERNAME,
     SANDBOX_HOME_DIR_NAME,
 )
@@ -244,7 +246,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             # If the container was created successfully, we
             # should get an error if we try to create another
             # container with the same name.
-            with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertRaises(SandboxError):
                 with AutograderSandbox(name=self.name):
                     pass
 
@@ -329,9 +331,6 @@ print('goodbye', flush=True)
 
         self._do_proc_tree_killed_on_timeout(prog_with_parent_proc_stall, sleep_time)
 
-    def test_proc_tree_killing_fails_but_run_command_still_exits(self) -> None:
-        self.fail('Mock _reap so that procs do not get killed, then call _do_proc_tree method')
-
     def _do_proc_tree_killed_on_timeout(self, program_str: str, sleep_time: int) -> None:
         with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
             ps_result = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
@@ -382,17 +381,6 @@ print('goodbye', flush=True)
             sandbox.run_command(['cat', runner_path], check=True)
             with self.assertRaises(SandboxCommandError):
                 sandbox.run_command(['touch', runner_path], check=True)
-
-    @mock.patch('subprocess.run')
-    def test_container_create_timeout(self, mock_check_call: mock.Mock, *args: object) -> None:
-        with AutograderSandbox():
-            args, kwargs = mock_check_call.call_args
-            self.assertIsNone(kwargs['timeout'])
-
-        timeout = 42
-        with AutograderSandbox(container_create_timeout=timeout):
-            args, kwargs = mock_check_call.call_args
-            self.assertEqual(timeout, kwargs['timeout'])
 
 
 class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
@@ -801,47 +789,6 @@ for i in range(2):
             print(result.stderr.read().decode())
             self.assertEqual(0, result.return_code)
 
-    # def test_fallback_time_limit_is_twice_timeout(self) -> None:
-    #     actual_fallback_timeout: int = -1
-
-    #     def _mock(context: str, **kwargs: Any) -> None:
-    #         if context == 'raise_timeout':
-    #             nonlocal actual_fallback_timeout
-    #             actual_fallback_timeout = kwargs['fallback_timeout']
-    #             raise subprocess.TimeoutExpired([], 10)
-
-    #     with AutograderSandbox(min_fallback_timeout=4) as sandbox:
-    #         with mock.patch('autograder_sandbox.autograder_sandbox._mocking_hook', new=_mock):
-    #             result = sandbox.run_command(['sleep', '20'], timeout=5)
-    #             stdout = result.stdout.read().decode()
-    #             stderr = result.stderr.read().decode()
-    #             print(stdout)
-    #             print(stderr)
-
-    #             self.assertEqual(10, actual_fallback_timeout)
-
-    #             self.assertTrue(result.timed_out)
-    #             self.assertIsNone(result.return_code)
-    #             self.assertIn('fallback timeout', stderr)
-
-    # def test_fallback_time_limit_is_min_fallback_timeout(self) -> None:
-    #     with AutograderSandbox(min_fallback_timeout=60) as sandbox:
-    #         to_throw = subprocess.TimeoutExpired([], 60)
-    #         subprocess_run_mock = mock.Mock(side_effect=to_throw)
-    #         with mock.patch('subprocess.run', new=subprocess_run_mock):
-    #             # The value passed to "timeout" here should be overridden
-    #             # by the value passed to "min_fallback_timeout"
-    #             result = sandbox.run_command(['sleep', '20'], timeout=10)
-    #             stdout = result.stdout.read().decode()
-    #             stderr = result.stderr.read().decode()
-
-    #             args, kwargs = subprocess_run_mock.call_args
-    #             self.assertEqual(60, kwargs['timeout'])
-
-    #             self.assertTrue(result.timed_out)
-    #             self.assertIsNone(result.return_code)
-    #             self.assertIn('fallback timeout', stderr)
-
     def test_memory_limit(self) -> None:
         program_str = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=4 * 10 ** 9, sleep_time=0)
         with AutograderSandbox(memory_limit='2g') as sandbox:
@@ -1227,9 +1174,168 @@ CMD ["echo", "goodbye"]
 
 
 class AutograderSandboxExceptionHandlingTestCase(unittest.TestCase):
-    def test_(self) -> None:
-        self.fail('TODO ADD TESTS')
+    def test_container_create_timeout_defaults_to_none(self, *args: object) -> None:
+        with mock.patch('subprocess.run') as mock_run:
+            with AutograderSandbox():
+                args, kwargs = mock_run.call_args
+                self.assertIsNone(kwargs['timeout'])
 
+    def test_container_create_and_start_timeout(self) -> None:
+        with mock.patch(
+            'autograder_sandbox.autograder_sandbox.subprocess.run',
+            new=_subprocess_timeout_when_command_starts_with(['docker', 'create'])
+        ):
+            with self.assertRaises(SandboxError) as cm:
+                with AutograderSandbox(container_create_timeout=2):
+                    pass
+
+            self.assertIn('Error creating container', str(cm.exception))
+            self.assertIn('timed out after 2 seconds', str(cm.exception))
+
+        with mock.patch(
+            'autograder_sandbox.autograder_sandbox.subprocess.run',
+            new=_subprocess_timeout_when_command_starts_with(['docker', 'start'])
+        ):
+            with self.assertRaises(SandboxError) as cm:
+                with AutograderSandbox(container_create_timeout=2):
+                    pass
+
+            self.assertIn('Error starting container', str(cm.exception))
+            self.assertIn('timed out after 2 seconds', str(cm.exception))
+
+    # TODO: Add later
+    # def test_container_setup_timeout_default_none(self) -> None:
+    #     self.fail()
+
+    def test_container_setup_timeout(self) -> None:
+        with mock.patch(
+            'autograder_sandbox.autograder_sandbox.subprocess.run',
+            new=_subprocess_timeout_when_command_starts_with(['docker', 'cp'])
+        ):
+            with self.assertRaises(SandboxError) as cm:
+                with AutograderSandbox(container_setup_timeout=1):
+                    pass
+
+            self.assertIn('Error adding entrypoint script to container', str(cm.exception))
+            self.assertIn('timed out after 1 second', str(cm.exception))
+
+        cmd_runner_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            'docker-image-setup',
+            'cmd_runner.py'
+        )
+        with mock.patch(
+            'autograder_sandbox.autograder_sandbox.subprocess.run',
+            new=_subprocess_timeout_when_command_starts_with(['docker', 'cp', cmd_runner_file])
+        ):
+            with self.assertRaises(SandboxError) as cm:
+                with AutograderSandbox(container_setup_timeout=1):
+                    pass
+
+            self.assertIn('Error adding cmd_runner.py to container', str(cm.exception))
+            self.assertIn('timed out after 1 second', str(cm.exception))
+
+        sandbox = AutograderSandbox(container_setup_timeout=1)
+        with mock.patch(
+            'autograder_sandbox.autograder_sandbox.subprocess.run',
+            new=_subprocess_timeout_when_command_starts_with(
+                ['docker', 'exec', '-i', sandbox.name, 'chmod', '555']
+            )
+        ):
+            with self.assertRaises(SandboxError) as cm:
+                with sandbox:
+                    pass
+
+            self.assertIn('Error setting cmd_runner.py permissions', str(cm.exception))
+            self.assertIn('timed out after 1 second', str(cm.exception))
+
+    # TODO: Add later
+    # def test_container_teardown_timeout_default_value(self) -> None:
+    #     self.fail()
+
+    def test_container_stop_timeout_succeeds_on_retry(self) -> None:
+        with mock.patch(
+            'autograder_sandbox.autograder_sandbox.subprocess.run',
+            new=_subprocess_timeout_when_command_starts_with(['docker', 'stop', '--time', '10'])
+        ):
+            with AutograderSandbox(container_teardown_timeout=11):
+                pass
+
+    def test_container_stop_timeout_on_retry(self) -> None:
+        with mock.patch(
+            'autograder_sandbox.autograder_sandbox.subprocess.run',
+            new=_subprocess_timeout_when_command_starts_with(['docker', 'stop'])
+        ):
+            with self.assertRaises(CriticalSandboxError) as cm:
+                with AutograderSandbox(container_teardown_timeout=2):
+                    pass
+
+    def test_proc_tree_killing_fails_but_run_command_still_exits(self) -> None:
+        with mock.patch(
+            'autograder_sandbox.autograder_sandbox.subprocess.run',
+            new=_subprocess_timeout_when_command_starts_with(
+                ['docker', 'run', '--rm', '--pid']
+            )
+        ):
+            with mock.patch(
+                'autograder_sandbox.autograder_sandbox._mocking_hook'
+            ) as reaper_error_hook:
+                with AutograderSandbox(process_reap_timeout=2) as sandbox:
+                    sandbox.run_command(['sleep', '10'], timeout=1)
+
+                reaper_error_hook.assert_called_once_with('reaping_failed')
+
+    # FIXME later: mock subprocess.run for two different calls
+    # def test_process_reaping_timeout_after_stop_fails(self) -> None:
+    #     with mock.patch(
+    #         'autograder_sandbox.autograder_sandbox.subprocess.run',
+    #         new=_subprocess_timeout_when_command_starts_with(['docker', 'stop', '--time', '10'])
+    #     ):
+    #         with mock.patch(
+    #             'autograder_sandbox.autograder_sandbox.subprocess.run',
+    #             new=_subprocess_timeout_when_command_starts_with(
+    #                 ['docker', 'run', '--rm', '--pid']
+    #             )
+    #         ):
+    #             with mock.patch(
+    #                 'autograder_sandbox.autograder_sandbox._mocking_hook'
+    #             ) as reaper_error_hook:
+    #                 with AutograderSandbox(
+    #                         container_teardown_timeout=11, process_reap_timeout=2):
+    #                     pass
+    #                 reaper_error_hook.assert_called_once_with('reaping_failed')
+
+    def test_container_destroy_timeout(self) -> None:
+        with mock.patch(
+            'autograder_sandbox.autograder_sandbox.subprocess.run',
+            new=_subprocess_timeout_when_command_starts_with(
+                ['docker', 'rm']
+            )
+        ):
+            with self.assertRaises(SandboxNotDestroyed) as cm:
+                with AutograderSandbox(container_teardown_timeout=11, process_reap_timeout=2):
+                    pass
+
+            self.assertIn('Error destroying container', str(cm.exception))
+
+
+_subprocess_orig = subprocess.run
+
+
+def _subprocess_timeout_when_command_starts_with(cmd_starts_with: List[str]) -> Callable[..., Any]:
+    def _mock_func(
+        cmd: List[str], *args: Any, timeout: Optional[int] = None, **kwargs: Any
+    ) -> 'subprocess.CompletedProcess[bytes]':
+        if cmd[:len(cmd_starts_with)] == cmd_starts_with:
+            assert timeout is not None
+            return _subprocess_orig(
+                ['bash', '-c',
+                 'echo "ERROORR\x80" 1>&2; echo "Hello\x80"; ' + 'sleep ' + str(timeout * 2)],
+                *args, timeout=timeout, **kwargs)
+
+        return _subprocess_orig(cmd, *args, timeout=timeout, **kwargs)
+
+    return _mock_func
 
 
 if __name__ == '__main__':
