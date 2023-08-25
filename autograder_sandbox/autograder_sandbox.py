@@ -10,8 +10,6 @@ from decimal import Decimal
 from typing import (IO, AnyStr, Iterator, List, Mapping, Optional, Sequence, Type)
 import logging
 
-import psutil
-
 logger = logging.getLogger(__name__)
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
@@ -731,58 +729,6 @@ def _chunked_read(
     remainder = amount_to_read % chunk_size
     if remainder:
         yield file_obj.read(remainder)
-
-
-def _find_process(search_for: str) -> Optional[psutil.Process]:
-    logger.debug(f'Searching for process {search_for}')
-    for p in psutil.process_iter():
-        try:
-            cmd_args = p.cmdline()
-            for arg in cmd_args:
-                if search_for in arg:
-                    return p
-        except psutil.NoSuchProcess:
-            continue
-
-    return None
-
-
-# Adapted from: https://psutil.readthedocs.io/en/latest/#kill-process-tree
-# and https://psutil.readthedocs.io/en/latest/#psutil.wait_procs
-def _kill_proc_descendents(parent: psutil.Process) -> None:
-    """
-    Kill a process's descendents (including grandchildren),
-    first sending SIGTERM, waiting, and then sending SIGKILL to the ones
-    that haven't exited
-    "sig" and return a (gone, still_alive) tuple.
-    "on_terminate", if specified, is a callback function which is
-    called as soon as a child terminates.
-    """
-    try:
-        assert parent.pid != os.getpid(), \
-            "_kill_proc_descendents called with pid of current process"
-        children = parent.children(recursive=True)
-    except psutil.NoSuchProcess:
-        return
-
-    logger.debug(f'Children {children}')  # FIXME
-    logger.debug('Sending SIGTERM to children')
-    for p in children:
-        try:
-            logger.debug(f'Sending SIGTERM to {p.cmdline()} (pid={p.pid})')
-            p.terminate()
-        except psutil.NoSuchProcess:
-            pass
-
-    logger.debug('Waiting for terminated procs')
-    gone, alive = psutil.wait_procs(children, timeout=1)
-    logger.debug('Sending SIGKILL to remaining children')
-    for p in alive:
-        try:
-            logger.debug(f'Sending SIGKILL to {p.cmdline()} (pid={p.pid})')
-            p.kill()
-        except psutil.NoSuchProcess:
-            pass
 
 
 def _mocking_hook(context: str = '', **kwargs: Any) -> None:
