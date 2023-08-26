@@ -81,6 +81,13 @@ class CriticalSandboxError(SandboxError):
     """
 
 
+class SandboxNotStopped(CriticalSandboxError):
+    """
+    Indicates that attempting to stop a sandbox container failed and that
+    manual intervention is required to stop the container.
+    """
+
+
 class SandboxNotDestroyed(SandboxError):
     """
     An exception to be raised when an unexpected error occurs trying to
@@ -404,7 +411,7 @@ class AutograderSandbox:
                     f'{self.name}: {fatal}\n'
                     + traceback.format_exc()
                 )
-                raise CriticalSandboxError from fatal
+                raise SandboxNotStopped from fatal
 
     def _reap(self, search_for: str) -> None:
         """
@@ -592,7 +599,6 @@ class AutograderSandbox:
                 stdout.write(chunk)
             stdout.seek(0)
 
-            # stderr_len = int(runner_stdout.readline().decode().rstrip())
             stderr = tempfile.NamedTemporaryFile()
             for chunk in _chunked_read(runner_stderr, stderr_len):
                 stderr.write(chunk)

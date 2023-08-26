@@ -47,7 +47,7 @@ def main() -> None:
             import traceback
             print('Internal AutograderSandbox error while setting up command', file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
-            raise
+            sys.exit(1)
 
     env_copy = os.environ.copy()
     if not args.as_root:

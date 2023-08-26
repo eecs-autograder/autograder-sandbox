@@ -17,7 +17,7 @@ from .autograder_sandbox import (
     SandboxCommandError,
     SandboxError,
     SandboxNotDestroyed,
-    CriticalSandboxError,
+    SandboxNotStopped,
     SANDBOX_USERNAME,
     SANDBOX_HOME_DIR_NAME,
 )
@@ -1266,7 +1266,7 @@ class AutograderSandboxExceptionHandlingTestCase(unittest.TestCase):
             'autograder_sandbox.autograder_sandbox.subprocess.run',
             new=_subprocess_timeout_when_command_starts_with(['docker', 'stop'])
         ):
-            with self.assertRaises(CriticalSandboxError) as cm:
+            with self.assertRaises(SandboxNotStopped) as cm:
                 with AutograderSandbox(container_teardown_timeout=2):
                     pass
 
