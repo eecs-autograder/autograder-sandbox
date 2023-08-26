@@ -1,31 +1,98 @@
-import json
+from typing import Any
 import os
+import signal
 import subprocess
 import tarfile
 import tempfile
+import traceback
 import uuid
-from typing import (IO, AnyStr, BinaryIO, Iterator, List, Mapping, NoReturn, Optional, Sequence,
-                    Union)
+from decimal import Decimal
+from typing import (IO, AnyStr, Iterator, List, Mapping, Optional, Sequence, Type)
+import logging
+
+logger = logging.getLogger(__name__)
 
 SANDBOX_HOME_DIR_NAME = '/home/autograder'
 SANDBOX_WORKING_DIR_NAME = os.path.join(SANDBOX_HOME_DIR_NAME, 'working_dir')
 # KEEP UP TO DATE WITH SANDBOX_USERNAME IN cmd_runner.py
 SANDBOX_USERNAME = 'autograder'
-SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'jameslp/ag-ubuntu-16:latest')
+SANDBOX_DOCKER_IMAGE = os.environ.get('SANDBOX_DOCKER_IMAGE', 'eecsautograder/ubuntu22:latest')
 
 SANDBOX_PIDS_LIMIT = int(os.environ.get('SANDBOX_PIDS_LIMIT', 512))
 SANDBOX_MEM_LIMIT = os.environ.get('SANDBOX_MEM_LIMIT', '4g')
-SANDBOX_MIN_FALLBACK_TIMEOUT = int(os.environ.get('SANDBOX_MIN_FALLBACK_TIMEOUT', 60))
+SANDBOX_CPU_CORE_LIMIT = (
+    Decimal(val) if (val := os.environ.get('SANDBOX_CPU_CORE_LIMIT')) is not None else None
+)
 
 CMD_RUNNER_PATH = '/usr/local/bin/cmd_runner.py'
 
 
-class SandboxCommandError(Exception):
+class CompletedCommand:
+    def __init__(
+        self, return_code: Optional[int],
+        stdout: IO[bytes],
+        stderr: IO[bytes],
+        timed_out: bool,
+        stdout_truncated: bool,
+        stderr_truncated: bool
+    ):
+        """
+        :param return_code: The return code of the command,
+            or None if the command timed out.
+        :param stdout: A file object containing the
+            stdout content of the command.
+        :param stderr: A file object containing the
+            stderr content of the command.
+        :param timed_out: Whether the command exceeded the time limit.
+        :param stdout_truncated: Whether stdout was truncated.
+        :param stderr_truncated: Whether stderr was truncated.
+        """
+        self.return_code = return_code
+        self.stdout = stdout
+        self.stderr = stderr
+        self.timed_out = timed_out
+        self.stdout_truncated = stdout_truncated
+        self.stderr_truncated = stderr_truncated
+
+
+class SandboxError(Exception):
+    """A base exception class for this library."""
+
+
+class SandboxCommandError(SandboxError):
     """
     An exception to be raised when a call to AutograderSandbox.run_command
-    doesn't finish normally.
+    with check=True exits with nonzero status or times out.
     """
-    pass
+    def __init__(self, cmd: List[str], result: CompletedCommand) -> None:
+        """
+        :param cmd: The command that was run.
+        :param result: An object containing information about the run results
+            of the command.
+        """
+        self.cmd = cmd
+        self.result = result
+
+
+class CriticalSandboxError(SandboxError):
+    """
+    An exception to be raised when critical, unexpected errors are encountered
+    that require manual intervention.
+    """
+
+
+class SandboxNotStopped(CriticalSandboxError):
+    """
+    Indicates that attempting to stop a sandbox container failed and that
+    manual intervention is required to stop the container.
+    """
+
+
+class SandboxNotDestroyed(SandboxError):
+    """
+    An exception to be raised when an unexpected error occurs trying to
+    destroy a sandbox. Note that such an error is *not* considered critical.
+    """
 
 
 class AutograderSandbox:
@@ -46,11 +113,13 @@ class AutograderSandbox:
                  docker_image: str = SANDBOX_DOCKER_IMAGE,
                  allow_network_access: bool = False,
                  environment_variables: Optional[Mapping[str, str]] = None,
-                 container_create_timeout: Optional[int] = None,
                  pids_limit: int = SANDBOX_PIDS_LIMIT,
                  memory_limit: str = SANDBOX_MEM_LIMIT,
-                 min_fallback_timeout: int = SANDBOX_MIN_FALLBACK_TIMEOUT,
-                 debug: bool = False):
+                 cpu_core_limit: Optional[Decimal] = SANDBOX_CPU_CORE_LIMIT,
+                 container_create_timeout: Optional[int] = None,
+                 container_setup_timeout: Optional[int] = None,
+                 process_reap_timeout: Optional[int] = 60,
+                 container_teardown_timeout: Optional[int] = 30):
         """
         :param name: A human-readable name that can be used to identify
             this sandbox instance. This value must be unique across all
@@ -74,11 +143,6 @@ class AutograderSandbox:
             value) pairs that should be set as environment variables
             inside the sandbox.
 
-        :param container_create_timeout: A time limit to be placed on
-            creating the underlying Docker container for this sandbox.
-            If the time limit is exceeded, subprocess.CalledProcessError
-            will be raised. A value of None indicates no time limit.
-
         :param pids_limit: Passed to "docker create" with the
             --pids-limit flag. This will limit the number of processes
             that can be created.
@@ -92,15 +156,14 @@ class AutograderSandbox:
             The default value for this parameter can be changed by
             setting the SANDBOX_PIDS_LIMIT environment variable.
 
-        :param memory_limit: Passed to "docker create" with the --memory,
-            --memory-swap, and --oom-kill-disable arguments. This will
+        :param memory_limit: Passed to "docker create" with the --memory
+            and --memory-swap arguments. This will
             limit the amount of memory that processes running in the
             sandbox can use.
 
-            We choose to disable the OOM killer to prevent the sandbox's
-            main process from being killed by the OOM killer (which would
-            cause the whole container to exit). This means, however, that
-            a command that hits the memory limit may time out.
+            New in version 6.0.0: This option no longer passes
+            --oom-kill-disable, as that option is not supported on
+            newer linux kernels with cgroups v2.
 
             In general we recommend setting this value as high as is safe
             for your host machine and additionally using the max_virtual_memory
@@ -110,23 +173,68 @@ class AutograderSandbox:
             The default value for this parameter can be changed by
             setting the SANDBOX_MEM_LIMIT environment variable.
 
-            See https://docs.docker.com/config/containers/resource_constraints/
-                    #limit-a-containers-access-to-memory
+            See https://docs.docker.com/config/containers/resource_constraints/\
+#limit-a-containers-access-to-memory
             for more information.
 
-        :param min_fallback_timeout: The timeout argument to run_command
-            is primarily enforced by cmd_runner.py. When that argument is
-            not None, a timeout of either twice the timeout argument to
-            run_command or this value, whichever is larger, will be applied
-            to the subprocess call to cmd_runner.py itself.
+        :param cpu_core_limit: Passed to "docker create" with the --cpus
+            argument. This will limit the number of cpu cores that processes
+            running in the sandbox can use.
 
-            The default value for this parameter can be changed by
-            setting the SANDBOX_MIN_FALLBACK_TIMEOUT environment variable.
+            See https://docs.docker.com/config/containers/resource_constraints/#cpu
+            for more information.
 
-        :param debug: Whether to print additional debugging information.
+            The default value for this parameter can be changed by setting the
+            SANDBOX_CPU_CORE_LIMIT environment variable.
+
+            New in version 6.0.0.
+
+        :param container_create_timeout: A time limit to be placed on
+            creating and starting the underlying Docker container for this sandbox.
+            If the time limit is exceeded, SandboxError
+            will be raised. A value of None indicates no time limit.
+
+            We recommend a high value or None for this time limit since
+            creating a container sometimes requires downloading a new
+            image.
+
+        :param container_setup_timeout: A time limit placed on individual
+            steps of starting and setting up the container
+            (e.g. adding the cmd_runner.py script to the container).
+            If the time limit is exceeded, SandboxError
+            will be raised. A value of None indicates no time limit.
+
+            New in 6.0.0
+
+        :param process_reap_timeout: A time limit placed on reaping a process
+            tree after a command times out or when stopping a container times
+            out.
+            If the time limit is exceeded, SandboxError
+            will be raised. A value of None indicates no time limit.
+
+            New in 6.0.0
+
+        :param container_teardown_timeout: A time limit placed on stopping
+            and destroying the container.
+            If the time limit is exceeded while stopping the container,
+            the sandbox will try reaping processes in the container
+            and retrying stopping the container. If the container
+            does not stop then, CriticalSandboxError is raised.
+
+            If the container is stopped but removing it fails,
+            SandboxNotDestroyed is raised.
+
+            A value of None indicates no time limit, but this is
+            NOT RECOMMENDED.
+
+            New in 6.0.0
         """
+        # Used for reliably finding the container's main process.
+        self._unique_id = f'sandbox-{uuid.uuid4().hex}'
+        self._main_process_script = f'/{self._unique_id}-main.sh'
+
         if name is None:
-            self._name = 'sandbox-{}'.format(uuid.uuid4().hex)
+            self._name = self._unique_id
         else:
             self._name = name
 
@@ -137,8 +245,11 @@ class AutograderSandbox:
         self._container_create_timeout = container_create_timeout
         self._pids_limit = pids_limit
         self._memory_limit = memory_limit
-        self._min_fallback_timeout = min_fallback_timeout
-        self.debug = debug
+        self._cpu_core_limit = cpu_core_limit
+
+        self._container_setup_timeout = container_setup_timeout
+        self._process_reap_timeout = process_reap_timeout
+        self._container_teardown_timeout = container_teardown_timeout
 
     def __enter__(self) -> 'AutograderSandbox':
         self._create_and_start()
@@ -149,7 +260,7 @@ class AutograderSandbox:
 
     def reset(self) -> None:
         """
-        Destroys, re-creates, and restarts the sandbox. As a side
+        Stops, destroys, re-creates, and restarts the sandbox. As a side
         effect, this will effectively kill any processes running inside
         the sandbox and reset the sandbox's filesystem.
         """
@@ -161,21 +272,26 @@ class AutograderSandbox:
         Restarts the sandbox without destroying it.
         """
         self._stop()
-        subprocess.check_call(['docker', 'start', self.name])
+        _subprocess_helper(
+            ['docker', 'start', self.name],
+            timeout=self._container_create_timeout,
+            error_msg_prefix='Error restarting container'
+        )
 
     def _create_and_start(self) -> None:
         create_args = [
-            'docker', 'run',
+            'docker', 'create',
             '--name=' + self.name,
             '-i',  # Run in interactive mode (for input redirection)
             '-t',  # Allocate psuedo tty
-            '-d',  # Detached
 
             '--pids-limit', str(self._pids_limit),
             '--memory', self._memory_limit,
             '--memory-swap', self._memory_limit,
-            '--oom-kill-disable',
         ]
+
+        if self._cpu_core_limit is not None:
+            create_args += ['--cpus', str(self._cpu_core_limit)]
 
         if not self.allow_network_access:
             # Create the container without a network stack.
@@ -193,26 +309,64 @@ class AutograderSandbox:
         # https://docs.docker.com/engine/reference/run/#overriding-dockerfile-image-defaults
         create_args += ['--entrypoint', '']
         create_args.append(self.docker_image)  # Image to use
-        create_args.append('/bin/bash')
+        create_args += ['/bin/bash', self._main_process_script]
 
-        subprocess.check_call(create_args, timeout=self._container_create_timeout)
+        logger.debug(f'Creating container: {create_args}')
+
+        # Create the container, copy our main process script (the name of which
+        # contains self._unique_id) into it, then start the container.
+
+        _subprocess_helper(
+            create_args,
+            timeout=self._container_create_timeout,
+            error_msg_prefix=f'Error creating container {self.name}',
+            reraise_as=SandboxError
+        )
+
+        with tempfile.NamedTemporaryFile() as main_proc_script_file:
+            # IMPORTANT: FLUSH THE STREAM AFTER WRITING!!
+            main_proc_script_file.write(b'while :\ndo read; done')
+            main_proc_script_file.flush()
+
+            _subprocess_helper(
+                [
+                    'docker', 'cp',
+                    main_proc_script_file.name, f'{self.name}:{self._main_process_script}'
+                ],
+                timeout=self._container_setup_timeout,
+                error_msg_prefix=f'Error adding entrypoint script to container {self.name}',
+                reraise_as=SandboxError
+            )
+
+        _subprocess_helper(
+            ['docker', 'start', self.name],
+            timeout=self._container_create_timeout,
+            error_msg_prefix=f'Error starting container {self.name}',
+            reraise_as=SandboxError
+        )
+
+        # Add cmd_runner.py to the container and set its permissions.
         try:
             cmd_runner_source = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
                 'docker-image-setup',
                 'cmd_runner.py'
             )
-            subprocess.run(
+            _subprocess_helper(
                 ['docker', 'cp', cmd_runner_source, '{}:{}'.format(self.name, CMD_RUNNER_PATH)],
-                check=True)
-            subprocess.run(
+                timeout=self._container_setup_timeout,
+                error_msg_prefix=f'Error adding cmd_runner.py to container {self.name}',
+                reraise_as=SandboxError
+            )
+            _subprocess_helper(
                 ['docker', 'exec', '-i', self.name, 'chmod', '555', CMD_RUNNER_PATH],
-                check=True)
-        except subprocess.CalledProcessError as e:
-            if self.debug:
-                print(e.stdout)
-                print(e.stderr)
-
+                timeout=self._container_setup_timeout,
+                error_msg_prefix=(
+                    f'Error setting cmd_runner.py permissions in container {self.name}'
+                ),
+                reraise_as=SandboxError
+            )
+        except Exception as e:
             self._destroy()
             raise
 
@@ -220,11 +374,71 @@ class AutograderSandbox:
 
     def _destroy(self) -> None:
         self._stop()
-        subprocess.check_call(['docker', 'rm', self.name])
+
+        # Note: Since destroying containers isn't immediately mission-critical
+        # in production (the sysadmin can set up a cron job that runs docker
+        # prune), we throw SandboxNotDestroyed instead of CriticalSandboxError
+        _subprocess_helper(
+            ['docker', 'rm', '-f', self.name],
+            timeout=self._container_teardown_timeout,
+            error_msg_prefix=f'Error destroying container {self.name}',
+            reraise_as=SandboxNotDestroyed
+        )
         self._is_running = False
 
     def _stop(self) -> None:
-        subprocess.check_call(['docker', 'stop', '--time', '1', self.name])
+        try:
+            _subprocess_helper(
+                ['docker', 'stop', '--time', '10', self.name],
+                timeout=self._container_teardown_timeout,
+                error_msg_prefix=f'Error stopping container {self.name}'
+            )
+            self._is_running = False
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            try:
+                self._reap(self._main_process_script)
+                _subprocess_helper(
+                    ['docker', 'stop', '--time', '5', self.name],
+                    timeout=self._container_teardown_timeout,
+                    error_msg_prefix=(
+                        f'Error stopping container {self.name} after reaping proc tree'
+                    )
+                )
+                self._is_running = False
+            except Exception as fatal:
+                logger.critical(
+                    'An unexpected error occurred while trying to stop container '
+                    f'{self.name}: {fatal}\n'
+                    + traceback.format_exc()
+                )
+                raise SandboxNotStopped from fatal
+
+    def _reap(self, search_for: str) -> None:
+        """
+        Search for the process that contains "search_for" in its command line
+        arguments. search_for should be either the unique main container process
+        or the unique ID included in a call to cmd_runner.py
+
+        Finds and kills the process tree whose root is the found process.
+        Does not kill the root of the tree.
+        """
+        try:
+            result = _subprocess_helper(
+                ['docker', 'run', '--rm', '--pid', 'host',
+                 'jameslp/autograder-sandbox-reaper:1', search_for],
+                timeout=self._process_reap_timeout,
+                error_msg_prefix=f'Error reaping children of {search_for}'
+            )
+            logger.debug(f'reaper exited with status {result.returncode}')
+            logger.debug(result.stdout)
+            logger.debug(result.stderr)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            _mocking_hook('reaping_failed')
+            logger.error(str(e))
+            logger.error(e.stdout)
+            logger.error(e.stderr)
+            # Do NOT reraise an exception here so that reaping failing
+            # for some random reason doesn't derail things.
 
     @property
     def name(self) -> str:
@@ -305,7 +519,7 @@ class AutograderSandbox:
 
         :param timeout: The time limit for the command.
 
-        :param check: Causes CalledProcessError to be raised if the
+        :param check: Causes SandboxCommandError to be raised if the
             command exits nonzero or times out.
 
         :param truncate_stdout: When not None, stdout from the command
@@ -314,10 +528,8 @@ class AutograderSandbox:
         :param truncate_stderr: When not None, stderr from the command
             will be truncated after this many bytes.
         """
-        cmd = ['docker', 'exec', '-i', self.name, CMD_RUNNER_PATH]
-
-        if stdin is None:
-            cmd.append('--stdin_devnull')
+        cmd_id = f'{self._unique_id}_cmd{uuid.uuid4().hex}'
+        cmd = ['docker', 'exec', '-i', self.name, CMD_RUNNER_PATH, '--cmd_id', cmd_id]
 
         if block_process_spawn:
             cmd += ['--block_process_spawn']
@@ -331,103 +543,79 @@ class AutograderSandbox:
         if timeout is not None:
             cmd += ['--timeout', str(timeout)]
 
-        if truncate_stdout is not None:
-            cmd += ['--truncate_stdout', str(truncate_stdout)]
-
-        if truncate_stderr is not None:
-            cmd += ['--truncate_stderr', str(truncate_stderr)]
-
         if as_root:
             cmd += ['--as_root']
 
         cmd += args
 
-        if self.debug:
-            print('running: {}'.format(cmd), flush=True)
+        logger.debug(f'Running: {cmd} in sandbox {self.name}')
 
-        with tempfile.TemporaryFile() as runner_stdout, tempfile.TemporaryFile() as runner_stderr:
-            fallback_timeout = (
-                max(timeout * 2, self._min_fallback_timeout) if timeout is not None else None)
+        return_code: Optional[int] = None
+        timed_out: bool = False
+        with open(os.devnull) as devnull, \
+                tempfile.TemporaryFile() as runner_stdout, \
+                tempfile.TemporaryFile() as runner_stderr, \
+                subprocess.Popen(cmd, stdin=stdin if stdin is not None else devnull,
+                                 stdout=runner_stdout, stderr=runner_stderr,
+                                 start_new_session=True) as docker_exec:
             try:
-                subprocess.run(cmd, stdin=stdin, stdout=runner_stdout, stderr=runner_stderr,
-                               check=True, timeout=fallback_timeout)
-                runner_stdout.seek(0)
-
-                json_len = int(runner_stdout.readline().decode().rstrip())
-                results_json = json.loads(runner_stdout.read(json_len).decode())
-
-                stdout_len = int(runner_stdout.readline().decode().rstrip())
-                stdout = tempfile.NamedTemporaryFile()
-                for chunk in _chunked_read(runner_stdout, stdout_len):
-                    stdout.write(chunk)
-                stdout.seek(0)
-
-                stderr_len = int(runner_stdout.readline().decode().rstrip())
-                stderr = tempfile.NamedTemporaryFile()
-                for chunk in _chunked_read(runner_stdout, stderr_len):
-                    stderr.write(chunk)
-                stderr.seek(0)
-
-                result = CompletedCommand(return_code=results_json['return_code'],
-                                          timed_out=results_json['timed_out'],
-                                          stdout=stdout,
-                                          stderr=stderr,
-                                          stdout_truncated=results_json['stdout_truncated'],
-                                          stderr_truncated=results_json['stderr_truncated'])
-
-                if (result.return_code != 0 or results_json['timed_out']) and check:
-                    self._raise_sandbox_command_error(stdout=runner_stdout, stderr=runner_stderr)
-
-                return result
+                return_code = docker_exec.wait(timeout=timeout)
             except subprocess.TimeoutExpired as e:
-                stdout_len = runner_stdout.tell()
-                runner_stdout.seek(0)
-                stdout = tempfile.NamedTemporaryFile()
-                for chunk in _chunked_read(runner_stdout, stdout_len):
-                    stdout.write(chunk)
-                stdout.seek(0)
-
-                stderr_len = runner_stderr.tell()
-                runner_stderr.seek(0)
-                stderr = tempfile.NamedTemporaryFile()
-                stderr.write(b'The command exceeded the fallback timeout. '
-                             b'If this occurs frequently, contact your system administrator.\n')
-                for chunk in _chunked_read(runner_stderr, stderr_len):
-                    stderr.write(chunk)
-                stderr.seek(0)
-
-                return CompletedCommand(
-                    return_code=None,
-                    timed_out=True,
-                    stdout=stdout,
-                    stderr=stderr,
-                    stdout_truncated=False,
-                    stderr_truncated=True,
+                logger.info(
+                    f'Command "{cmd}" in sandbox {self.name} timed out. '
+                    'Will attempt to reap process tree.'
                 )
-            except subprocess.CalledProcessError as e:
-                # For some reason mypy wants us to return, even though
-                # _raise_sandbox_command_error is NoReturn
-                return self._raise_sandbox_command_error(
-                    stdout=runner_stdout, stderr=runner_stderr, original_error=e)
+                timed_out = True
+                self._reap(cmd_id)
+                os.killpg(os.getpgid(docker_exec.pid), signal.SIGTERM)
 
-    def _raise_sandbox_command_error(
-        self, *,
-        stdout: IO[bytes],
-        stderr: IO[bytes],
-        original_error: Optional[Exception] = None
-    ) -> NoReturn:
-        stdout.seek(0)
-        stderr.seek(0)
-        new_error = SandboxCommandError(
-            stdout.read().decode('utf-8', 'surrogateescape')
-            + '\n'
-            + stderr.read().decode('utf-8', 'surrogateescape')
-        )
+                try:
+                    docker_exec.communicate(None, timeout=1)
+                except:  # noqa
+                    # http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
+                    os.killpg(os.getpgid(docker_exec.pid), signal.SIGKILL)
 
-        if original_error is not None:
-            raise new_error from original_error
-        else:
-            raise new_error
+            stdout_len = runner_stdout.tell()
+            if truncate_stdout is not None and runner_stdout.tell() > truncate_stdout:
+                stdout_len = truncate_stdout
+                stdout_truncated = True
+            else:
+                stdout_truncated = False
+
+            stderr_len = runner_stderr.tell()
+            if truncate_stderr is not None and runner_stderr.tell() > truncate_stderr:
+                stderr_len = truncate_stderr
+                stderr_truncated = True
+            else:
+                stderr_truncated = False
+
+            # IMPORTANT: These calls to .seek(0) must happen *after*
+            # calling .tell() on these files.
+            runner_stdout.seek(0)
+            runner_stderr.seek(0)
+
+            stdout = tempfile.NamedTemporaryFile()
+            for chunk in _chunked_read(runner_stdout, stdout_len):
+                stdout.write(chunk)
+            stdout.seek(0)
+
+            stderr = tempfile.NamedTemporaryFile()
+            for chunk in _chunked_read(runner_stderr, stderr_len):
+                stderr.write(chunk)
+            stderr.seek(0)
+
+            result = CompletedCommand(
+                return_code=return_code,
+                timed_out=timed_out,
+                stdout=stdout,
+                stderr=stderr,
+                stdout_truncated=stdout_truncated,
+                stderr_truncated=stderr_truncated)
+
+            if check and result.return_code != 0:
+                raise SandboxCommandError(cmd=args, result=result)
+
+            return result
 
     def add_files(
         self, *filenames: str,
@@ -487,6 +675,52 @@ class AutograderSandbox:
         self.run_command(chown_cmd, as_root=True)
 
 
+# A convenience function that calls subprocess.run with the given timeout,
+# checks the return code (by passing check=True), and captures the output.
+# If the command fails, logs error_msg_prefix and the stdout and stderr
+# of the command.
+def _subprocess_helper(
+    cmd: List[str], *, timeout: Optional[int], error_msg_prefix: str,
+    reraise_as: Optional[Type[Exception]] = None
+) -> 'subprocess.CompletedProcess[str]':
+    try:
+        return subprocess.run(
+            cmd,
+            timeout=timeout,
+            check=True,
+            capture_output=True,
+            encoding='utf-8',
+            errors='surrogateescape'
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        if e.stdout is None:
+            stdout = ''
+        elif isinstance(e.stdout, bytes):
+            stdout = e.stdout.decode(errors="surrogateescape")
+        else:
+            stdout = e.stdout
+
+        if e.stderr is None:
+            stderr = ''
+        elif isinstance(e.stderr, bytes):
+            stderr = e.stderr.decode(errors="surrogateescape")
+        else:
+            stderr = e.stderr
+
+        error_msg = (
+            error_msg_prefix + '\n'
+            + str(e) + '\n'
+            + f'Stdout:\n{stdout}\n'
+            + f'Stderr:\n{stderr}\n'
+        )
+
+        logger.debug(error_msg)
+        if reraise_as is not None:
+            raise reraise_as(error_msg) from e
+        else:
+            raise
+
+
 # Generator that reads amount_to_read bytes from file_obj, yielding
 # one chunk at a time.
 def _chunked_read(
@@ -503,29 +737,18 @@ def _chunked_read(
         yield file_obj.read(remainder)
 
 
-class CompletedCommand:
-    def __init__(
-        self, return_code: Optional[int],
-        stdout: IO[bytes],
-        stderr: IO[bytes],
-        timed_out: bool,
-        stdout_truncated: bool,
-        stderr_truncated: bool
-    ):
-        """
-        :param return_code: The return code of the command,
-            or None if the command timed out.
-        :param stdout: A file object containing the
-            stdout content of the command.
-        :param stderr: A file object containing the
-            stderr content of the command.
-        :param timed_out: Whether the command exceeded the time limit.
-        :param stdout_truncated: Whether stdout was truncated.
-        :param stderr_truncated: Whether stderr was truncated.
-        """
-        self.return_code = return_code
-        self.stdout = stdout
-        self.stderr = stderr
-        self.timed_out = timed_out
-        self.stdout_truncated = stdout_truncated
-        self.stderr_truncated = stderr_truncated
+def _mocking_hook(context: str = '', **kwargs: Any) -> None:
+    """
+    USE SPARINGLY
+
+    Used to more easily insert side-effects at specific points in the program.
+    Tests should patch this method with something that can perform the
+    correct action needed for the test.
+
+    The "context" argument is so that tests can perform different actions
+    based on its value.
+
+    The extra kwargs can be used to check hard-to-test internal values
+    (like the fallback timeout, for example).
+    """
+    pass
