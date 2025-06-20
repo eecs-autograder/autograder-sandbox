@@ -423,6 +423,13 @@ class AutograderSandbox:
         Does not kill the root of the tree.
         """
         try:
+            # FIXME
+            # Options:
+            # - find some way to bundle the reaper with the python package,
+            #   or host it somewhere that doesn't require login
+            # - use --pid container:container_name instead of --pid host
+            # - pid = docker top | grep cmd_id  .split()[0]
+            #   run_command(kill -9 pid)
             result = _subprocess_helper(
                 ['docker', 'run', '--rm', '--pid', 'host',
                  'jameslp/autograder-sandbox-reaper:1', search_for],
