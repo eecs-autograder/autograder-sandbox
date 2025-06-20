@@ -4,8 +4,8 @@ This Python library uses Docker container functionality to create a secure, isol
 Full API documentation can be found at http://autograder-sandbox.readthedocs.io
 
 ## Requirements
-- Python >= 3.6
-- Docker >= 1.10
+- Python >= 3.8
+- Docker >= 20.10
 
 ## Installation
 1. Install [Docker](https://docs.docker.com/engine/installation/)
@@ -14,7 +14,7 @@ The first time you start a sandbox (using a context manager), the appropriate Do
 
 ## Configuration
 ### Docker Image
-The Docker image used by default is the legacy image [jameslp/ag-ubuntu-16:latest](https://hub.docker.com/r/jameslp/ag-ubuntu-16/). __Please do not create any new images based on it__. Instead, custom images should be based on one of the images defined in the [base-docker-images repo](https://github.com/eecs-autograder/base-docker-images).
+The Docker image used by default is `eecsautograder/ubuntu22:latest`. Custom images should be based on one of the images defined in the [base-docker-images repo](https://github.com/eecs-autograder/base-docker-images).
 
 To specify which image to use, pass the name of the image as the `docker_image` parameter to the `AutograderSandbox` constructor. You can also set the `SANDBOX_DOCKER_IMAGE` environment variable to specify a new default value for that parameter.
 
@@ -28,7 +28,8 @@ These variables can be used to override the default values of certain Autograder
 
 `SANDBOX_DOCKER_IMAGE`: The default docker image to use for new sandbox instances.\
 `SANDBOX_MEM_LIMIT`: The default container-level physical memory limit. Defaults to "4g" (4GB). See https://docs.docker.com/config/containers/resource_constraints/#memory for allowed values.\
-`SANDBOX_PIDS_LIMIT`: The default container-level process spawn limit. Defaults to 512.
+`SANDBOX_PIDS_LIMIT`: The default container-level process spawn limit. Defaults to 512.\
+`SANDBOX_CPU_CORE_LIMIT`: The number of CPU cores the container can use. Not set by default. Seehttps://docs.docker.com/config/containers/resource_constraints/#cpu for allowed values.
 
 ## Basic usage
 ```
@@ -44,6 +45,8 @@ Versioning scheme:
 - 0.0.x releases contain minor tweaks or bug fixes.
 - 0.x.0 releases contain new features.
 - x.0.0 releases may contain backwards-incompatible changes.
+
+6.0.0a1 - Restructuring of command-running implementation, changes to constructor params.
 
 5.0.0 - Backwards-incompatible change to process spawn limit.
 - Issues fixed:
