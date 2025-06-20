@@ -4,8 +4,8 @@ This Python library uses Docker container functionality to create a secure, isol
 Full API documentation can be found at http://autograder-sandbox.readthedocs.io
 
 ## Requirements
-- Python >= 3.8
-- Docker >= 20.10
+- Python >= 3.10
+- Docker
 
 ## Installation
 1. Install [Docker](https://docs.docker.com/engine/installation/)

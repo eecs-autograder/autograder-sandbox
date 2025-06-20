@@ -1,0 +1,3 @@
+pycodestyle autograder_sandbox
+pydocstyle autograder_sandbox
+mypy autograder_sandbox

@@ -1,0 +1,223 @@
+name: Autograder.io CLI CI
+
+on:
+  push:
+    branches: [ develop, release* ]
+    tags:
+      - '*'
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-22.04
+
+    strategy:
+      matrix:
+        python-version: ['3.10']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install package dependencies
+      run: |
+        pip install pip-tools
+        pip-sync requirements.txt requirements-dev.txt
+
+    - name: Lint
+      run: ./dev_scripts/lint.sh
+
+  test:
+    runs-on: ubuntu-22.04
+    needs: lint
+
+    strategy:
+      matrix:
+        python-version: ['3.10']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install package dependencies
+      run: |
+        pip install pip-tools
+        pip-sync requirements.txt requirements-dev.txt
+
+    - name: Test
+      run: python3 -m unittest discover -v
+
+  # build-wheel should run on any push to a release branch.
+  # test-wheel runs on build-wheel success.
+  # github-release runs only on build-wheel success on tagged commits
+  # (we'll only tag commits used for releases).
+  build-wheel:
+    name: Build Python package distribution
+
+    runs-on: ubuntu-22.04
+    needs:
+    - lint
+    if: startsWith(github.ref, 'refs/heads/release') || startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/pull/')
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Install pypa/build
+      run: python3 -m pip install build --user
+
+    - name: Build a binary wheel and a source tarball
+      # Use a fake version number for non-tagged runs.
+      # Tagged runs are for actual releases.
+      env:
+        SETUPTOOLS_SCM_PRETEND_VERSION: ${{ !startsWith(github.ref, 'refs/tags/') && format('0.1.dev{0}', github.run_number) || '' }}
+      run: python3 -m build
+
+    - name: Store the distribution packages
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+  test-wheel:
+    runs-on: ubuntu-22.04
+    needs:
+    - build-wheel
+    - test  # DO NOT REMOVE; publish depends on test-wheel
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Install wheel
+      run: |
+        ls dist
+        pip install --user dist/*.whl
+
+    - name: Create a sandbox and run a command. SANITY CHECK THIS OUTPUT.
+      run: |
+        python3 dev_scripts/package_test/hello_world.py
+
+  publish-to-testpypi:
+    name: Publish Python distribution to TestPyPI
+    needs:
+    - build-wheel
+    runs-on: ubuntu-latest
+
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/autograder-sandbox
+
+    permissions:
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Publish distribution 📦 to TestPyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        verbose: true
+        repository-url: https://test.pypi.org/legacy/
+
+  publish-to-pypi:
+    name: >-
+      Publish Python distribution to PyPI
+    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
+    needs:  # test-wheel depends on test
+    - test-wheel
+    runs-on: ubuntu-latest
+
+    environment:
+      name: pypi
+      url: https://pypi.org/p/autograder-sandbox  # Replace <package-name> with your PyPI project name
+
+    permissions:
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Publish distribution 📦 to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        verbose: true
+
+
+  # See https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/
+  github-release:
+    name: >-
+      Sign the Python distribution with Sigstore
+      and upload them to GitHub Release
+
+    needs:
+    - publish-to-pypi
+
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write  # IMPORTANT: mandatory for making GitHub Releases
+      id-token: write  # IMPORTANT: mandatory for sigstore
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Sign the dists with Sigstore
+      uses: sigstore/gh-action-sigstore-python@v3.0.0
+      with:
+        inputs: >-
+          ./dist/*.tar.gz
+          ./dist/*.whl
+    - name: Create GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: >-
+        gh release create
+        "$GITHUB_REF_NAME"
+        --repo "$GITHUB_REPOSITORY"
+        --notes ""
+    - name: Upload artifact signatures to GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      # Upload to GitHub Release using the `gh` CLI.
+      # `dist/` contains the built packages, and the
+      # sigstore-produced signatures and certificates.
+      run: >-
+        gh release upload
+        "$GITHUB_REF_NAME" dist/**
+        --repo "$GITHUB_REPOSITORY"
