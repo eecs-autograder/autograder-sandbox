@@ -24,6 +24,10 @@ SANDBOX_CPU_CORE_LIMIT = (
     Decimal(val) if (val := os.environ.get('SANDBOX_CPU_CORE_LIMIT')) is not None else None
 )
 
+# Originally for EECS 489 to add --privileged flag on their
+# deployment. BE VERY CAREFUL WHEN USING THIS!
+SANDBOX_EXTRA_CREATE_ARGS = os.environ.get('SANDBOX_EXTRA_CREATE_ARGS', '').split()
+
 CMD_RUNNER_PATH = '/usr/local/bin/cmd_runner.py'
 
 
@@ -302,6 +306,10 @@ class AutograderSandbox:
                 create_args += [
                     '-e', "{}={}".format(key, value)
                 ]
+
+        # Originally for EECS 489 to add --privileged flag on their
+        # deployment. BE VERY CAREFUL WHEN USING THIS!
+        create_args += SANDBOX_EXTRA_CREATE_ARGS
 
         # Override any CMD or ENTRYPOINT directives used in custom images.
         # This restriction is in place to avoid situations where a custom
