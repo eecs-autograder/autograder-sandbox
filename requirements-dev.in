@@ -1,7 +1,8 @@
-Sphinx>=3.1.1
-sphinx-autodoc-typehints>=1.11.0
+Sphinx
+sphinx-autodoc-typehints
 pycodestyle
 pydocstyle
 mypy
 isort
+psutil
 types-psutil

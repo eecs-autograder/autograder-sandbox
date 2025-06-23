@@ -32,6 +32,8 @@ packaging==25.0
     # via sphinx
 pathspec==0.12.1
     # via mypy
+psutil==7.0.0
+    # via -r /home/jameslp/autograder/sandbox/dev_scripts/../requirements-dev.in
 pycodestyle==2.14.0
     # via -r /home/jameslp/autograder/sandbox/dev_scripts/../requirements-dev.in
 pydocstyle==6.3.0
