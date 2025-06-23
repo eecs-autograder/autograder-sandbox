@@ -425,8 +425,8 @@ class AutograderSandbox:
         """
         try:
             result = _subprocess_helper(
-                ['docker', 'run', '--rm', '--pid', f'container:{self.name}',
-                 f'eecsautograder/autograder-sandbox-reaper:{__version__}', search_for],
+                ['docker', 'run', '--rm', '--pid', 'host',
+                 'jameslp/autograder-sandbox-reaper:1', search_for],
                 timeout=self._process_reap_timeout,
                 error_msg_prefix=f'Error reaping children of {search_for}'
             )
