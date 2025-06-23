@@ -1,31 +1,28 @@
-from encodings.punycode import T
-import sys
-import os
-import traceback
-import unittest
-from unittest import mock
-import subprocess
-import tempfile
-import multiprocessing
 import itertools
 import logging
+import multiprocessing
+import os
+import subprocess
+import sys
+import tempfile
 import time
+import unittest
 import uuid
-from typing import IO, Callable, TypeVar, Optional, List, Any
-from collections import OrderedDict, Counter
+from collections import Counter, OrderedDict
+from typing import IO, Any, Callable, List, Optional, TypeVar
+from unittest import mock
 
 from .autograder_sandbox import (
     SANDBOX_DOCKER_IMAGE,
+    SANDBOX_HOME_DIR_NAME,
+    SANDBOX_USERNAME,
     AutograderSandbox,
     CompletedCommand,
     SandboxCommandError,
     SandboxError,
     SandboxNotDestroyed,
     SandboxNotStopped,
-    SANDBOX_USERNAME,
-    SANDBOX_HOME_DIR_NAME,
 )
-
 from .output_size_performance_test import output_size_performance_test
 
 _logger = logging.getLogger()
@@ -482,7 +479,6 @@ class AutograderSandboxResourceLimitTestCase(_SetUp):
             self.assertTrue(result.timed_out)
 
     def test_block_process_spawn(self) -> None:
-        cmd = ['bash', '-c', 'echo spam | cat > egg.txt']
         with self.sandbox:
             # Spawning processes is allowed by default
             filename = _add_string_to_sandbox_as_file(
@@ -934,7 +930,7 @@ print('goodbye', flush=True)
 
             parent_prog_filename = _add_string_to_sandbox_as_file(parent_prog, '.py', sandbox)
 
-            for i in range(100):
+            for _ in range(100):
                 result = sandbox.run_command(
                     ['python3', parent_prog_filename],
                     timeout=20, as_root=True
@@ -973,6 +969,7 @@ except socket.error as e:
     traceback.print_exc()
     sys.exit(1)
 """
+
     def test_networking_disabled(self) -> None:
         with AutograderSandbox() as sandbox:
             result = self._check_network_access(sandbox)
@@ -1019,10 +1016,11 @@ except socket.error as e:
             check=True, timeout=10)
         return sandbox.run_command(['python3', 'has_access.py'])
 
+
 class AutograderSandboxCopyFilesTestCase(_SetUp):
 
     def test_copy_files_into_sandbox(self) -> None:
-        files = []
+        files: list[IO[str]] = []
         try:
             for i in range(10):
                 f = tempfile.NamedTemporaryFile(mode='w+')
@@ -1201,7 +1199,7 @@ class AutograderSandboxExceptionHandlingTestCase(_SetUp):
     def test_container_create_timeout_defaults_to_none(self, *args: object) -> None:
         with mock.patch('subprocess.run') as mock_run:
             with AutograderSandbox():
-                args, kwargs = mock_run.call_args
+                _, kwargs = mock_run.call_args
                 self.assertIsNone(kwargs['timeout'])
 
     def test_container_create_and_start_timeout(self) -> None:
@@ -1290,7 +1288,7 @@ class AutograderSandboxExceptionHandlingTestCase(_SetUp):
             'autograder_sandbox.autograder_sandbox.subprocess.run',
             new=_subprocess_timeout_when_command_starts_with(['docker', 'stop'])
         ):
-            with self.assertRaises(SandboxNotStopped) as cm:
+            with self.assertRaises(SandboxNotStopped):
                 with AutograderSandbox(container_teardown_timeout=2):
                     pass
 
@@ -1352,12 +1350,12 @@ def _subprocess_timeout_when_command_starts_with(cmd_starts_with: List[str]) -> 
     ) -> 'subprocess.CompletedProcess[bytes]':
         if cmd[:len(cmd_starts_with)] == cmd_starts_with:
             assert timeout is not None
-            return _subprocess_orig(
+            return _subprocess_orig(  # type: ignore
                 ['bash', '-c',
                  'echo "ERROORR\x80" 1>&2; echo "Hello\x80"; ' + 'sleep ' + str(timeout * 2)],
                 *args, timeout=timeout, **kwargs)
 
-        return _subprocess_orig(cmd, *args, timeout=timeout, **kwargs)
+        return _subprocess_orig(cmd, *args, timeout=timeout, **kwargs)  # type: ignore
 
     return _mock_func
 

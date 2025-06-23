@@ -1,13 +1,12 @@
 #! /usr/bin/python3
 
-import os
-import sys
-import subprocess
-import pwd
 import argparse
-import resource
 import grp
-
+import os
+import pwd
+import resource
+import subprocess
+import sys
 
 # KEEP UP TO DATE WITH SANDBOX_USERNAME IN autograder_sandbox.py
 SANDBOX_USERNAME = 'autograder'
@@ -64,10 +63,10 @@ def main() -> None:
             preexec_fn=set_subprocess_rlimits
         )
         sys.exit(result.returncode)
-    except (FileNotFoundError, NotADirectoryError) as e:
+    except (FileNotFoundError, NotADirectoryError):
         print('Command "{}" not found'.format(args.cmd_args[0]), file=sys.stderr)
         sys.exit(127)
-    except PermissionError as e:
+    except PermissionError:
         print(
             'Permission denied: Command "{}" not executable'.format(args.cmd_args[0]),
             file=sys.stderr
