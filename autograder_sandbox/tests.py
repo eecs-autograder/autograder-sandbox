@@ -9,6 +9,7 @@ import time
 import unittest
 import uuid
 from collections import Counter, OrderedDict
+from pathlib import Path
 from typing import IO, Any, Callable, List, Optional, TypeVar
 from unittest import mock
 
@@ -140,6 +141,20 @@ class AutograderSandboxBasicRunCommandTestCase(_SetUp):
             cmd_result = self.sandbox.run_command(['./spam'])
             self.assertIn('Permission denied', cmd_result.stderr.read().decode())
             self.assertEqual(1, cmd_result.return_code)
+
+
+class AutograderSandboxImageStartsAsRootTestCase(unittest.TestCase):
+    def test_container_always_created_with_root_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(Path(tmpdir) / 'Dockerfile', 'w') as f:
+                f.write("""FROM eecsautograder/ubuntu24:latest
+USER autograder
+""")
+            image_name = 'non_root_image'
+            subprocess.run(['docker', 'build', '-t', image_name, tmpdir], check=True)
+
+        with AutograderSandbox(docker_image=image_name) as sandbox:
+            sandbox.run_command(['touch', '/home/autograder/working_dir'], check=True)
 
 
 class AutograderSandboxMiscTestCase(_SetUp):
