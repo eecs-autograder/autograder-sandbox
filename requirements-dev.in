@@ -2,7 +2,7 @@ Sphinx
 sphinx-autodoc-typehints
 pycodestyle
 pydocstyle
-mypy
+pyright
 isort
 psutil
 types-psutil
