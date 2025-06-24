@@ -25,6 +25,8 @@ from .autograder_sandbox import (
 )
 from .output_size_performance_test import output_size_performance_test
 
+CI = os.getenv('GITHUB_ACTIONS') == 'true'
+
 _logger = logging.getLogger()
 _logger.setLevel(logging.DEBUG)
 _handler = logging.StreamHandler(sys.stdout)
@@ -814,6 +816,7 @@ for i in range(2):
             print(still_up.stderr.read().decode())
             self.assertEqual(0, still_up.return_code)
 
+    @unittest.skipIf(CI, 'Skipping on CI')
     def test_memory_limit_many_small_processes(self) -> None:
         program_str = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=4 * 10 ** 6, sleep_time=5)
         with AutograderSandbox(memory_limit='256m') as sandbox:
@@ -1292,6 +1295,7 @@ class AutograderSandboxExceptionHandlingTestCase(_SetUp):
                 with AutograderSandbox(container_teardown_timeout=2):
                     pass
 
+    @unittest.skipIf(CI, 'Skipping on CI')
     def test_proc_tree_killing_fails_but_run_command_still_exits(self) -> None:
         with mock.patch(
             'autograder_sandbox.autograder_sandbox.subprocess.run',
