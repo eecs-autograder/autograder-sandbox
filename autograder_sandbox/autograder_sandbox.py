@@ -1,4 +1,4 @@
-from typing import Any
+import logging
 import os
 import signal
 import subprocess
@@ -7,8 +7,9 @@ import tempfile
 import traceback
 import uuid
 from decimal import Decimal
-from typing import (IO, AnyStr, Iterator, List, Mapping, Optional, Sequence, Type)
-import logging
+from typing import IO, Any, AnyStr, Iterator, List, Mapping, Optional, Sequence, Type
+
+from .version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -366,7 +367,7 @@ class AutograderSandbox:
                 ),
                 reraise_as=SandboxError
             )
-        except Exception as e:
+        except Exception:
             self._destroy()
             raise
 
@@ -394,7 +395,7 @@ class AutograderSandbox:
                 error_msg_prefix=f'Error stopping container {self.name}'
             )
             self._is_running = False
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
             try:
                 self._reap(self._main_process_script)
                 _subprocess_helper(
@@ -560,7 +561,7 @@ class AutograderSandbox:
                                  start_new_session=True) as docker_exec:
             try:
                 return_code = docker_exec.wait(timeout=timeout)
-            except subprocess.TimeoutExpired as e:
+            except subprocess.TimeoutExpired:
                 logger.info(
                     f'Command "{cmd}" in sandbox {self.name} timed out. '
                     'Will attempt to reap process tree.'
@@ -729,7 +730,7 @@ def _chunked_read(
     chunk_size: int = 1024 * 16
 ) -> Iterator[bytes]:
     num_reads = amount_to_read // chunk_size
-    for i in range(num_reads):
+    for _ in range(num_reads):
         yield file_obj.read(chunk_size)
 
     remainder = amount_to_read % chunk_size

@@ -1,0 +1,8 @@
+Sphinx
+sphinx-autodoc-typehints
+pycodestyle
+pydocstyle
+pyright
+isort
+psutil
+types-psutil

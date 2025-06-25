@@ -43,7 +43,7 @@ def _reap(search_for: str) -> None:
 
 def _find_process(search_for: str) -> 'psutil.Process | None':
     print(f'Searching for process {search_for}', flush=True)
-    for p in psutil.process_iter():
+    for p in psutil.process_iter():  # type: ignore
         try:
             cmd_args = p.cmdline()
             if cmd_args[:2] == ['docker', 'exec']:
@@ -86,7 +86,7 @@ def _kill_proc_descendents(parent: psutil.Process) -> None:
             pass
 
     print('Waiting for terminated procs', flush=True)
-    gone, alive = psutil.wait_procs(children, timeout=3)
+    _, alive = psutil.wait_procs(children, timeout=3)
     print('Sending SIGKILL to remaining children', flush=True)
     for p in alive:
         try:

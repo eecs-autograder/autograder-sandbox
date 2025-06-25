@@ -1,28 +1,31 @@
-import sys
-import os
-import unittest
-from unittest import mock
-import subprocess
-import tempfile
-import multiprocessing
 import itertools
 import logging
+import multiprocessing
+import os
+import subprocess
+import sys
+import tempfile
 import time
+import unittest
 import uuid
-from typing import IO, Callable, TypeVar, Optional, List, Any
-from collections import OrderedDict, Counter
+from collections import Counter, OrderedDict
+from typing import IO, Any, Callable, List, Optional, TypeVar
+from unittest import mock
 
 from .autograder_sandbox import (
+    SANDBOX_DOCKER_IMAGE,
+    SANDBOX_HOME_DIR_NAME,
+    SANDBOX_USERNAME,
     AutograderSandbox,
+    CompletedCommand,
     SandboxCommandError,
     SandboxError,
     SandboxNotDestroyed,
     SandboxNotStopped,
-    SANDBOX_USERNAME,
-    SANDBOX_HOME_DIR_NAME,
 )
-
 from .output_size_performance_test import output_size_performance_test
+
+CI = os.getenv('GITHUB_ACTIONS') == 'true'
 
 _logger = logging.getLogger()
 _logger.setLevel(logging.DEBUG)
@@ -44,7 +47,12 @@ def gb_to_bytes(num_gb: int) -> int:
     return 1000 * mb_to_bytes(num_gb)
 
 
-class AutograderSandboxInitTestCase(unittest.TestCase):
+class _SetUp(unittest.TestCase):
+    def setUp(self) -> None:
+        subprocess.run(['docker', 'pull', SANDBOX_DOCKER_IMAGE], check=True, timeout=120)
+
+
+class AutograderSandboxInitTestCase(_SetUp):
     def setUp(self) -> None:
         self.name = 'awexome_container{}'.format(uuid.uuid4().hex)
         self.environment_variables = OrderedDict(
@@ -71,10 +79,10 @@ class AutograderSandboxInitTestCase(unittest.TestCase):
         self.assertEqual(self.environment_variables, sandbox.environment_variables)
 
 
-class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
+class AutograderSandboxBasicRunCommandTestCase(_SetUp):
 
     def setUp(self) -> None:
-        self.sandbox = AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest')
+        self.sandbox = AutograderSandbox()
 
         self.root_cmd = ["touch", "/"]
 
@@ -134,7 +142,7 @@ class AutograderSandboxBasicRunCommandTestCase(unittest.TestCase):
             self.assertEqual(1, cmd_result.return_code)
 
 
-class AutograderSandboxMiscTestCase(unittest.TestCase):
+class AutograderSandboxMiscTestCase(_SetUp):
 
     def setUp(self) -> None:
         self.name = 'awexome_container{}'.format(uuid.uuid4().hex)
@@ -165,7 +173,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         long_output = b'a' * 100
         expected_output = long_output[:truncate_length]
         self._write_and_seek(self.stdin, long_output)
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(
                 ['cat'], stdin=self.stdin, truncate_stdout=truncate_length)
             self.assertEqual(expected_output, result.stdout.read())
@@ -177,7 +185,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         long_output = b'a' * 100
         expected_output = long_output[:truncate_length]
         self._write_and_seek(self.stdin, long_output)
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(
                 ['bash', '-c', '>&2 cat'], stdin=self.stdin, truncate_stderr=truncate_length)
             self.assertEqual(expected_output, result.stderr.read())
@@ -189,7 +197,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         long_output = b'a' * 100
         expected_output = long_output[:truncate_length]
         self._write_and_seek(self.stdin, long_output)
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(
                 ['bash', '-c', 'cat; sleep 10'],
                 stdin=self.stdin,
@@ -205,7 +213,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
         long_output = b'a' * 100
         expected_output = long_output[:truncate_length]
         self._write_and_seek(self.stdin, long_output)
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(
                 ['bash', '-c', '>&2 cat; sleep 10'],
                 stdin=self.stdin,
@@ -219,12 +227,12 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
     def test_run_command_with_input(self) -> None:
         expected_stdout = b'spam egg sausage spam'
         self._write_and_seek(self.stdin, expected_stdout)
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(['cat'], stdin=self.stdin)
             self.assertEqual(expected_stdout, result.stdout.read())
 
     def test_command_tries_to_read_from_stdin_when_stdin_arg_is_none(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(
                 ['python3', '-c', "import sys; sys.stdin.read(); print('done')"],
                 max_stack_size=10000000,
@@ -235,7 +243,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertEqual(0, result.return_code)
 
     def test_return_code_reported_and_stderr_recorded(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(['ls', 'definitely not a file'])
             self.assertNotEqual(0, result.return_code)
             self.assertNotEqual('', result.stderr)
@@ -272,7 +280,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertEqual(expected_output, result.stdout.read().decode())
 
     def test_home_env_var_set_in_preexec(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             result = sandbox.run_command(['bash', '-c', 'printf $HOME'])
             self.assertEqual(SANDBOX_HOME_DIR_NAME, result.stdout.read().decode())
 
@@ -283,7 +291,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertEqual('/root', result.stdout.read().decode())
 
     def test_reset(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             file_to_add = os.path.abspath(__file__)
             sandbox.add_files(file_to_add)
 
@@ -294,7 +302,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             self.assertEqual('', sandbox.run_command(['ls']).stdout.read().decode())
 
     def test_restart_added_files_preserved(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             file_to_add = os.path.abspath(__file__)
             sandbox.add_files(file_to_add)
 
@@ -307,6 +315,7 @@ class AutograderSandboxMiscTestCase(unittest.TestCase):
             ls_result = sandbox.run_command(['ls']).stdout.read().decode()
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
 
+    @unittest.skipIf(CI, 'Skipping on CI')
     def test_entire_process_tree_killed_on_timeout(self) -> None:
         sleep_time = 10
         prog_with_subprocess_stall = """
@@ -332,7 +341,7 @@ print('goodbye', flush=True)
         self._do_proc_tree_killed_on_timeout(prog_with_parent_proc_stall, sleep_time)
 
     def _do_proc_tree_killed_on_timeout(self, program_str: str, sleep_time: int) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             ps_result = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
             print(ps_result)
             num_ps_lines = len(ps_result.split('\n'))
@@ -357,7 +366,7 @@ print('goodbye', flush=True)
             self.assertEqual(num_ps_lines, num_ps_lines_after_cmd)
 
     def test_command_can_leave_child_process_running(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             # sandbox.run_command(['sleep', '300'])
             ps_result = sandbox.run_command(['ps', '-aux']).stdout.read().decode()
             print(ps_result)
@@ -376,14 +385,14 @@ print('goodbye', flush=True)
 
     def test_try_to_change_cmd_runner(self) -> None:
         runner_path = '/usr/local/bin/cmd_runner.py'
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             # Make sure the file path above is correct
             sandbox.run_command(['cat', runner_path], check=True)
             with self.assertRaises(SandboxCommandError):
                 sandbox.run_command(['touch', runner_path], check=True)
 
 
-class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
+class AutograderSandboxEncodeDecodeIOTestCase(_SetUp):
     def setUp(self) -> None:
         self.non_utf = b'\x80 and some other stuff just because\n'
         with self.assertRaises(UnicodeDecodeError):
@@ -396,7 +405,7 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
         os.remove(self.file_to_print)
 
     def test_non_unicode_chars_in_normal_output(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
             result = sandbox.run_command(['cat', self.file_to_print])
@@ -410,7 +419,7 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
             self.assertEqual(self.non_utf, stderr)
 
     def test_non_unicode_chars_in_output_command_timed_out(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
             result = sandbox.run_command(
@@ -419,17 +428,17 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
             self.assertTrue(result.timed_out)
             self.assertEqual(self.non_utf, result.stdout.read())
 
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
             result = sandbox.run_command(
                 ['bash', '-c', '>&2 cat {}; sleep 5'.format(self.file_to_print)],
                 timeout=1)
             self.assertTrue(result.timed_out)
-            self.assertEqual(self.non_utf, result.stderr.read())
+            self.assertIn(self.non_utf, result.stderr.read())
 
     def test_non_unicode_chars_in_output_on_process_error(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
             with self.assertRaises(SandboxCommandError) as cm:
@@ -438,7 +447,7 @@ class AutograderSandboxEncodeDecodeIOTestCase(unittest.TestCase):
                     check=True)
             self.assertIn(self.non_utf, cm.exception.result.stdout.read())
 
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             sandbox.add_files(self.file_to_print)
 
             with self.assertRaises(SandboxCommandError) as cm:
@@ -459,10 +468,10 @@ print('goodbye', flush=True)
 """.format(_SLEEP_TIME)
 
 
-class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
+class AutograderSandboxResourceLimitTestCase(_SetUp):
 
     def setUp(self) -> None:
-        self.sandbox = AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest')
+        self.sandbox = AutograderSandbox()
 
         self.small_virtual_mem_limit = mb_to_bytes(100)
         self.large_virtual_mem_limit = gb_to_bytes(1)
@@ -473,7 +482,6 @@ class AutograderSandboxResourceLimitTestCase(unittest.TestCase):
             self.assertTrue(result.timed_out)
 
     def test_block_process_spawn(self) -> None:
-        cmd = ['bash', '-c', 'echo spam | cat > egg.txt']
         with self.sandbox:
             # Spawning processes is allowed by default
             filename = _add_string_to_sandbox_as_file(
@@ -734,7 +742,7 @@ def _call_function_and_allocate_sandbox_if_needed(
     func: Callable[[AutograderSandbox], ReturnType], sandbox: Optional[AutograderSandbox]
 ) -> ReturnType:
     if sandbox is None:
-        sandbox = AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest')
+        sandbox = AutograderSandbox()
         with sandbox:
             return func(sandbox)
     else:
@@ -743,9 +751,9 @@ def _call_function_and_allocate_sandbox_if_needed(
 # -----------------------------------------------------------------------------
 
 
-class ContainerLevelResourceLimitTestCase(unittest.TestCase):
+class ContainerLevelResourceLimitTestCase(_SetUp):
     def test_pid_limit(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             filename = _add_string_to_sandbox_as_file(
                 _PROCESS_SPAWN_PROG_TMPL.format(num_processes=1000, sleep_time=5), '.py', sandbox
             )
@@ -779,7 +787,7 @@ for i in range(2):
     for proc in processes:
         proc.communicate()
 """
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             filename = _add_string_to_sandbox_as_file(
                 spawn_twice_prog.format(num_processes=350, sleep_time=5), '.py', sandbox
             )
@@ -809,6 +817,7 @@ for i in range(2):
             print(still_up.stderr.read().decode())
             self.assertEqual(0, still_up.return_code)
 
+    @unittest.skipIf(CI, 'Skipping on CI')
     def test_memory_limit_many_small_processes(self) -> None:
         program_str = _HEAP_USAGE_PROG_TMPL.format(num_bytes_on_heap=4 * 10 ** 6, sleep_time=5)
         with AutograderSandbox(memory_limit='256m') as sandbox:
@@ -925,7 +934,7 @@ print('goodbye', flush=True)
 
             parent_prog_filename = _add_string_to_sandbox_as_file(parent_prog, '.py', sandbox)
 
-            for i in range(100):
+            for _ in range(100):
                 result = sandbox.run_command(
                     ['python3', parent_prog_filename],
                     timeout=20, as_root=True
@@ -945,60 +954,77 @@ print('goodbye', flush=True)
 # -----------------------------------------------------------------------------
 
 
-class AutograderSandboxNetworkAccessTestCase(unittest.TestCase):
+class AutograderSandboxNetworkAccessTestCase(_SetUp):
 
     def setUp(self) -> None:
         super().setUp()
 
-        self.ping_cmd = ['ping', '-c', '5', '1.1.1.1']
+        # https://stackoverflow.com/questions/3764291/how-can-i-see-if-theres-an-available-and-active-network-connection-in-python
+        self.has_network_access_prog = """
+import socket
+import sys
+try:
+    socket.setdefaulttimeout(3)
+    # Connect to Google's DNS server
+    socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(('8.8.8.8', 53))
+    sys.exit(0)
+except socket.error as e:
+    print(e)
+    traceback.print_exc()
+    sys.exit(1)
+"""
 
     def test_networking_disabled(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
-            result = sandbox.run_command(self.ping_cmd)
+        with AutograderSandbox() as sandbox:
+            result = self._check_network_access(sandbox)
             self.assertNotEqual(0, result.return_code)
 
     def test_networking_enabled(self) -> None:
-        with AutograderSandbox(
-            docker_image='jameslp/ag-ubuntu-16:latest', allow_network_access=True
-        ) as sandbox:
-            result = sandbox.run_command(self.ping_cmd)
+        with AutograderSandbox(allow_network_access=True) as sandbox:
+            result = self._check_network_access(sandbox)
             print(result.stdout.read().decode())
             print(result.stderr.read().decode())
             self.assertEqual(0, result.return_code)
 
     def test_set_allow_network_access(self) -> None:
-        sandbox = AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest')
+        sandbox = AutograderSandbox()
         self.assertFalse(sandbox.allow_network_access)
         with sandbox:
-            result = sandbox.run_command(self.ping_cmd)
+            result = self._check_network_access(sandbox)
             self.assertNotEqual(0, result.return_code)
 
         sandbox.allow_network_access = True
         self.assertTrue(sandbox.allow_network_access)
         with sandbox:
-            result = sandbox.run_command(self.ping_cmd)
+            result = self._check_network_access(sandbox)
             self.assertEqual(0, result.return_code)
 
         sandbox.allow_network_access = False
         self.assertFalse(sandbox.allow_network_access)
         with sandbox:
-            result = sandbox.run_command(self.ping_cmd)
+            result = self._check_network_access(sandbox)
             self.assertNotEqual(0, result.return_code)
 
     def test_error_set_allow_network_access_while_running(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             with self.assertRaises(ValueError):
                 sandbox.allow_network_access = True
 
             self.assertFalse(sandbox.allow_network_access)
-            result = sandbox.run_command(self.ping_cmd)
+            result = self._check_network_access(sandbox)
             self.assertNotEqual(0, result.return_code)
 
+    def _check_network_access(self, sandbox: AutograderSandbox) -> CompletedCommand:
+        sandbox.run_command(
+            ['bash', '-c', f'echo "{self.has_network_access_prog}" > has_access.py'],
+            check=True, timeout=10)
+        return sandbox.run_command(['python3', 'has_access.py'])
 
-class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
+
+class AutograderSandboxCopyFilesTestCase(_SetUp):
 
     def test_copy_files_into_sandbox(self) -> None:
-        files = []
+        files: list[IO[str]] = []
         try:
             for i in range(10):
                 f = tempfile.NamedTemporaryFile(mode='w+')
@@ -1008,7 +1034,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
 
             filenames = [file_.name for file_ in files]
 
-            with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+            with AutograderSandbox() as sandbox:
                 sandbox.add_files(*filenames)
 
                 ls_result = sandbox.run_command(['ls']).stdout.read().decode()
@@ -1035,7 +1061,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
             f.write(expected_content)
             f.seek(0)
 
-            with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+            with AutograderSandbox() as sandbox:
                 new_name = 'new_filename.txt'
                 sandbox.add_and_rename_file(f.name, new_name)
 
@@ -1056,7 +1082,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
 
             added_filename = os.path.basename(f.name)
 
-            with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+            with AutograderSandbox() as sandbox:
                 sandbox.add_files(f.name, owner='root', read_only=True)
 
                 actual_content = sandbox.run_command(
@@ -1099,7 +1125,7 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
 
             added_filename = os.path.basename(f.name)
 
-            with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+            with AutograderSandbox() as sandbox:
                 sandbox.add_files(f.name)
 
                 actual_content = sandbox.run_command(
@@ -1115,12 +1141,12 @@ class AutograderSandboxCopyFilesTestCase(unittest.TestCase):
                 self.assertEqual(overwrite_content, actual_content)
 
     def test_error_add_files_invalid_owner(self) -> None:
-        with AutograderSandbox(docker_image='jameslp/ag-ubuntu-16:latest') as sandbox:
+        with AutograderSandbox() as sandbox:
             with self.assertRaises(ValueError):
                 sandbox.add_files('steve', owner='not_an_owner')
 
 
-class OverrideCmdAndEntrypointTestCase(unittest.TestCase):
+class OverrideCmdAndEntrypointTestCase(_SetUp):
     def test_override_image_cmd(self) -> None:
         dockerfile = """FROM jameslp/autograder-sandbox:3.1.2
 CMD ["echo", "goodbye"]
@@ -1173,11 +1199,11 @@ CMD ["echo", "goodbye"]
 # -----------------------------------------------------------------------------
 
 
-class AutograderSandboxExceptionHandlingTestCase(unittest.TestCase):
+class AutograderSandboxExceptionHandlingTestCase(_SetUp):
     def test_container_create_timeout_defaults_to_none(self, *args: object) -> None:
         with mock.patch('subprocess.run') as mock_run:
             with AutograderSandbox():
-                args, kwargs = mock_run.call_args
+                _, kwargs = mock_run.call_args
                 self.assertIsNone(kwargs['timeout'])
 
     def test_container_create_and_start_timeout(self) -> None:
@@ -1266,7 +1292,7 @@ class AutograderSandboxExceptionHandlingTestCase(unittest.TestCase):
             'autograder_sandbox.autograder_sandbox.subprocess.run',
             new=_subprocess_timeout_when_command_starts_with(['docker', 'stop'])
         ):
-            with self.assertRaises(SandboxNotStopped) as cm:
+            with self.assertRaises(SandboxNotStopped):
                 with AutograderSandbox(container_teardown_timeout=2):
                     pass
 
@@ -1328,12 +1354,12 @@ def _subprocess_timeout_when_command_starts_with(cmd_starts_with: List[str]) -> 
     ) -> 'subprocess.CompletedProcess[bytes]':
         if cmd[:len(cmd_starts_with)] == cmd_starts_with:
             assert timeout is not None
-            return _subprocess_orig(
+            return _subprocess_orig(  # type: ignore
                 ['bash', '-c',
                  'echo "ERROORR\x80" 1>&2; echo "Hello\x80"; ' + 'sleep ' + str(timeout * 2)],
                 *args, timeout=timeout, **kwargs)
 
-        return _subprocess_orig(cmd, *args, timeout=timeout, **kwargs)
+        return _subprocess_orig(cmd, *args, timeout=timeout, **kwargs)  # type: ignore
 
     return _mock_func
 

@@ -1,10 +1,9 @@
 import argparse
 import os
-import tempfile
 import time
 from typing import Optional
 
-from .autograder_sandbox import AutograderSandbox, SandboxCommandError
+from .autograder_sandbox import AutograderSandbox
 
 
 def main() -> None:

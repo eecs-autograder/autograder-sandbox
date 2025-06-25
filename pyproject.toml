@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autograder-sandbox"
+authors = [
+  { name="James Perretta", email="jameslp@umich.edu" },
+]
+description = "Python library for running untrusted code in Docker containers."
+readme = "README.md"
+
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)"
+]
+keywords = ["autograder", "autograder.io"]
+
+dynamic = ["dependencies", "version"]
+
+[project.urls]
+Homepage = "https://github.com/eecs-autograder/autograder-sandbox"
+Issues = "https://github.com/eecs-autograder/autograder-sandbox/issues"
+
+[tool.setuptools]
+packages = ["autograder_sandbox"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.in"] }
+
+[tool.setuptools_scm]
+
+# Note: pycodestyle's toml parser fails when lists have newlines, so we'll
+# configure pycodestyle in lint.sh with command line options until that changes.
+# [pycodestyle]
+# ignore = "W503,E133"
+# max-line-length = 99
+# exclude = []
+
+[tool.pydocstyle]
+ignore = "D1,D200,D203,D204,D205,D212,D4"
+
+[tool.pyright]
+include = ["autograder_sandbox"]
+# exclude = []
+strict = ["autograder_sandbox"]
+
+[tool.isort]
+profile = "black"
+line_length = 99
+# skip = []
+
+# We'll enable this later
+# [tool.black]
+# line-length = 99
+# target-version = ["py310"]
+# exclude = "tests/local_stack|autograder_io_schema"

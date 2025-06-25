@@ -1,12 +1,10 @@
-from .autograder_sandbox import (
-    AutograderSandbox as AutograderSandbox,
-    CompletedCommand as CompletedCommand,
-    SandboxError as SandboxError,
-    SandboxCommandError as SandboxCommandError,
-    CriticalSandboxError as CriticalSandboxError,
-    SandboxNotStopped as SandboxNotStopped,
-    SandboxNotDestroyed as SandboxNotDestroyed,
-    SANDBOX_USERNAME as SANDBOX_USERNAME,
-    SANDBOX_HOME_DIR_NAME as SANDBOX_HOME_DIR_NAME,
-    SANDBOX_DOCKER_IMAGE as SANDBOX_DOCKER_IMAGE
-)
+from .autograder_sandbox import SANDBOX_DOCKER_IMAGE as SANDBOX_DOCKER_IMAGE
+from .autograder_sandbox import SANDBOX_HOME_DIR_NAME as SANDBOX_HOME_DIR_NAME
+from .autograder_sandbox import SANDBOX_USERNAME as SANDBOX_USERNAME
+from .autograder_sandbox import AutograderSandbox as AutograderSandbox
+from .autograder_sandbox import CompletedCommand as CompletedCommand
+from .autograder_sandbox import CriticalSandboxError as CriticalSandboxError
+from .autograder_sandbox import SandboxCommandError as SandboxCommandError
+from .autograder_sandbox import SandboxError as SandboxError
+from .autograder_sandbox import SandboxNotDestroyed as SandboxNotDestroyed
+from .autograder_sandbox import SandboxNotStopped as SandboxNotStopped
