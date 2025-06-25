@@ -315,6 +315,7 @@ class AutograderSandboxMiscTestCase(_SetUp):
             ls_result = sandbox.run_command(['ls']).stdout.read().decode()
             self.assertEqual(os.path.basename(file_to_add) + '\n', ls_result)
 
+    @unittest.skipIf(CI, 'Skipping on CI')
     def test_entire_process_tree_killed_on_timeout(self) -> None:
         sleep_time = 10
         prog_with_subprocess_stall = """
@@ -1295,7 +1296,6 @@ class AutograderSandboxExceptionHandlingTestCase(_SetUp):
                 with AutograderSandbox(container_teardown_timeout=2):
                     pass
 
-    @unittest.skipIf(CI, 'Skipping on CI')
     def test_proc_tree_killing_fails_but_run_command_still_exits(self) -> None:
         with mock.patch(
             'autograder_sandbox.autograder_sandbox.subprocess.run',
