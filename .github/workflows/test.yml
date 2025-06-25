@@ -253,6 +253,13 @@ jobs:
         ls dist
         pip install --user dist/*.whl
 
+    - name: Get package version
+      id: get_version
+      run: |
+        VERSION=$(python -c "import autograder_sandbox; print(autograder_sandbox.__version__)")
+        echo "VERSION=$VERSION"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
@@ -267,7 +274,7 @@ jobs:
       with:
         context: autograder_sandbox/reaper
         push: false
-        tags: eecsautograder/autograder-sandbox-reaper:{{ python -c "import autograder_sandbox; print(autograder_sandbox.__version__)" }}
+        tags: eecsautograder/autograder-sandbox-reaper:${{ steps.get_version.outputs.version }}
 
   publish-reaper-container:
     runs-on: ubuntu-latest
@@ -279,6 +286,13 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
+    - name: Get package version
+      id: get_version
+      run: |
+        VERSION=$(python -c "import autograder_sandbox; print(autograder_sandbox.__version__)")
+        echo "VERSION=$VERSION"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -294,4 +308,4 @@ jobs:
       with:
         context: autograder_sandbox/reaper
         push: true
-        tags: eecsautograder/autograder-sandbox-reaper:{{ python -c "import autograder_sandbox; print(autograder_sandbox.__version__)" }}
+        tags: eecsautograder/autograder-sandbox-reaper:${{ steps.get_version.outputs.version }}
