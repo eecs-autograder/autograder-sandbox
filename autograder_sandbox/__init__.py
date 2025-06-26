@@ -8,3 +8,4 @@ from .autograder_sandbox import SandboxCommandError as SandboxCommandError
 from .autograder_sandbox import SandboxError as SandboxError
 from .autograder_sandbox import SandboxNotDestroyed as SandboxNotDestroyed
 from .autograder_sandbox import SandboxNotStopped as SandboxNotStopped
+from .version import __version__

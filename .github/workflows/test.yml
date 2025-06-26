@@ -175,6 +175,110 @@ jobs:
       with:
         verbose: true
 
+  test-build-reaper-container:
+    runs-on: ubuntu-latest
+    needs:
+      - build-wheel
+
+    environment: docker-reaper-build
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Install wheel
+      run: |
+        ls dist
+        pip install --user dist/*.whl
+
+    - name: Get package version
+      id: get_version
+      run: |
+        VERSION=$(python -c "import autograder_sandbox; print(autograder_sandbox.__version__)")
+        echo "VERSION=$VERSION"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: jameslp
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: autograder_sandbox/reaper
+        push: false
+        tags: eecsautograder/autograder-sandbox-reaper:${{ steps.get_version.outputs.version }}
+
+  publish-reaper-container:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
+    needs:  # test-wheel depends on test
+      - test-wheel
+
+    environment: docker-reaper-build
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Install wheel
+      run: |
+        ls dist
+        pip install --user dist/*.whl
+
+    - name: Get package version
+      id: get_version
+      run: |
+        VERSION=$(python -c "import autograder_sandbox; print(autograder_sandbox.__version__)")
+        echo "VERSION=$VERSION"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: jameslp
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: autograder_sandbox/reaper
+        push: true
+        tags: eecsautograder/autograder-sandbox-reaper:${{ steps.get_version.outputs.version }}
 
   # See https://packaging.python.org/en/latest/guides/publishing-package-distribution-releases-using-github-actions-ci-cd-workflows/
   github-release:
@@ -184,6 +288,7 @@ jobs:
 
     needs:
     - publish-to-pypi
+    - publish-reaper-container
 
     runs-on: ubuntu-22.04
 
