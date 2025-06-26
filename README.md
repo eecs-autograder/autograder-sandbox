@@ -54,6 +54,8 @@ Use feature branches for all changes, and make a pull request against the `devel
 
 #### "release-*" branches
 Name release branches as `release-x.x.x`, where `x.x.x` is the semantic version.
+Minor releases should get their own release branch (e.g., 6.0.x).
+Patch fixes should be handled as described on their own.
 
 Do NOT merge or rebase directly between the develop and release branches.
 Once a release branch is created, it should only be updated with feature- or bugfix-style branches.
@@ -66,10 +68,10 @@ If instructions differ across releases, include both, and label which version th
 
 #### Publishing a release
 To create a github release, tag the latest commit on the release branch.
-For example, to create the first non-dev 2024.8 release, we'd run:
+For example, to create the first non-dev 6.0.x release, we'd run:
 ```
-git checkout release-2024.08.x
-git tag 2024.8.0
+git checkout release-6.0.x
+git tag 6.0.0
 git push --tags
 ```
 CI will build and test the package, publish to pypi, and create a GitHub release.
