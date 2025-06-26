@@ -289,6 +289,11 @@ class AutograderSandbox:
             '--pids-limit', str(self._pids_limit),
             '--memory', self._memory_limit,
             '--memory-swap', self._memory_limit,
+
+            # Start the main process script as root.
+            # This way, custom image Dockerfiles don't have
+            # to specify "USER root" at the end of the Dockerfile
+            '--user=root:root',
         ]
 
         if self._cpu_core_limit is not None:
