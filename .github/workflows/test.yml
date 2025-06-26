@@ -229,6 +229,7 @@ jobs:
 
   publish-reaper-container:
     runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')  # only publish to PyPI on tag pushes
     needs:  # test-wheel depends on test
       - test-wheel
 
