@@ -1,4 +1,4 @@
-name: Autograder.io CLI CI
+name: Autograder.io Sandbox CI
 
 on:
   push:
