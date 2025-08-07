@@ -77,7 +77,14 @@ git push --tags
 CI will build and test the package, publish to pypi, and create a GitHub release.
 
 ## Changelog
-6.0.0a1 - Restructuring of command-running implementation, changes to constructor params.
+6.0.0 - Restructuring of command-running implementation to support in-container process reaping and prevent rare circumstances when a command hitting the memory limit causes docker to stall.
+- The main change that accomplishes this is enabling the OOM killer. We restructured how commands are run to avoid situations where the OOM killer kills the container's entrypoint process.
+  - We also added extra layers of timeout + fallback behavior during key steps such as container teardown. At a certain point, a critical error is raised that users of the library can catch and then alert sysadmins.
+- We also added a thin layer of abstraction that lets us identify the container's entrypoint process and specific commands run inside the container. Using a special "reaper" container mounted in the same PID namespace as the sandbox, we can clean up problematic processes.
+- Other minor fixes:
+  - Containers are now always started as root, even if another user is specified in the Dockerfile. This should help avoid a common pitfall where custom images forget to re-specify `USER root` and then the container fails on startup when trying to set permissions on the entrypoint script.
+    - Similarly, when `as_root` is True, we now explicitly set the user and group to root instead of relying on the default user set in the Dockerfile being root.      
+- A full list of issues and PRs in this release can be found [here](https://github.com/orgs/eecs-autograder/projects/4/views/1)
 
 5.0.0 - Backwards-incompatible change to process spawn limit.
 - Issues fixed:
