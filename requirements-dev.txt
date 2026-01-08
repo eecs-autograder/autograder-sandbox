@@ -19,7 +19,7 @@ idna==3.10
 imagesize==1.4.1
     # via sphinx
 isort==6.0.1
-    # via -r /home/jameslp/autograder/sandbox/dev_scripts/../requirements-dev.in
+    # via -r requirements-dev.in
 jinja2==3.1.6
     # via sphinx
 markupsafe==3.0.2
@@ -29,15 +29,15 @@ nodeenv==1.9.1
 packaging==25.0
     # via sphinx
 psutil==7.0.0
-    # via -r /home/jameslp/autograder/sandbox/dev_scripts/../requirements-dev.in
+    # via -r requirements-dev.in
 pycodestyle==2.14.0
-    # via -r /home/jameslp/autograder/sandbox/dev_scripts/../requirements-dev.in
+    # via -r requirements-dev.in
 pydocstyle==6.3.0
-    # via -r /home/jameslp/autograder/sandbox/dev_scripts/../requirements-dev.in
+    # via -r requirements-dev.in
 pygments==2.19.2
     # via sphinx
 pyright==1.1.402
-    # via -r /home/jameslp/autograder/sandbox/dev_scripts/../requirements-dev.in
+    # via -r requirements-dev.in
 requests==2.32.4
     # via sphinx
 snowballstemmer==3.0.1
@@ -46,10 +46,10 @@ snowballstemmer==3.0.1
     #   sphinx
 sphinx==8.1.3
     # via
-    #   -r /home/jameslp/autograder/sandbox/dev_scripts/../requirements-dev.in
+    #   -r requirements-dev.in
     #   sphinx-autodoc-typehints
 sphinx-autodoc-typehints==3.0.1
-    # via -r /home/jameslp/autograder/sandbox/dev_scripts/../requirements-dev.in
+    # via -r requirements-dev.in
 sphinxcontrib-applehelp==2.0.0
     # via sphinx
 sphinxcontrib-devhelp==2.0.0
@@ -65,8 +65,8 @@ sphinxcontrib-serializinghtml==2.0.0
 tomli==2.2.1
     # via sphinx
 types-psutil==7.0.0.20250601
-    # via -r /home/jameslp/autograder/sandbox/dev_scripts/../requirements-dev.in
+    # via -r requirements-dev.in
 typing-extensions==4.14.0
     # via pyright
-urllib3==2.5.0
+urllib3==2.6.3
     # via requests
